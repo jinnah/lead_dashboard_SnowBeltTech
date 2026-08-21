@@ -10,6 +10,9 @@
 \set b_owner   'b1000000-0000-4000-8000-000000000001'
 \set biz_a     'a0000000-0000-4000-8000-000000000001'
 \set biz_b     'b0000000-0000-4000-8000-000000000001'
+\set src_a_web 'site-alpha-synthetic'
+\set src_a_vapi 'asst-alpha-synthetic-0001'
+\set src_b_web 'site-bravo-synthetic'
 \set lead_a1   'aa000000-0000-4000-8000-000000000001'
 \set lead_a2   'aa000000-0000-4000-8000-000000000002'
 \set lead_a3   'aa000000-0000-4000-8000-000000000003'
@@ -41,6 +44,19 @@ begin
   perform set_config('request.jwt.claim.sub', '', true);
   perform set_config('request.jwt.claim.role', 'anon', true);
   perform set_config('role', 'anon', true);
+end;
+$$;
+
+-- Become the privileged server-side role (what a future server-only client uses).
+create or replace function pg_temp.login_service()
+returns void
+language plpgsql
+as $$
+begin
+  perform set_config('request.jwt.claims', json_build_object('role', 'service_role')::text, true);
+  perform set_config('request.jwt.claim.sub', '', true);
+  perform set_config('request.jwt.claim.role', 'service_role', true);
+  perform set_config('role', 'service_role', true);
 end;
 $$;
 

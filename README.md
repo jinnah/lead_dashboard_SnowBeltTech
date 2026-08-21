@@ -4,7 +4,7 @@ A multi-tenant lead-management portal for local service businesses (HVAC, plumbi
 
 ## Current status
 
-**Foundation + local tenancy schema with Row Level Security (Batch 1).** The five tenancy tables (`businesses`, `profiles`, `business_memberships`, `integration_sources`, `leads`) exist as reproducible Supabase migrations with RLS enabled and forced, least-privilege grants, defensive immutability triggers, deterministic synthetic seed data and a pgTAP isolation test suite — all running **only on a local Docker Supabase stack**.
+**Foundation + local tenancy schema with RLS + trusted ingestion database boundary (Batches 1–2A).** The tenancy tables (`businesses`, `profiles`, `business_memberships`, `integration_sources`, `leads`), the operational `ingestion_events` ledger, an internal lead-number allocator and the privileged `ingest_lead_event` RPC exist as reproducible Supabase migrations with RLS enabled and forced, least-privilege grants, defensive immutability triggers, deterministic synthetic seed data and a pgTAP test suite — all running **only on a local Docker Supabase stack**.
 
 **No hosted Supabase project is connected** (no `supabase login`/`link`, no remote database URL). No Next.js application, authentication UI, ingestion API, n8n change or production integration exists yet. The only other committed artifact is a sanitized reference copy of the currently live n8n workflow.
 
@@ -18,6 +18,7 @@ Verified prerequisites: Node 24, pnpm 11, Docker Desktop (daemon running). The S
 | `pnpm run db:start` | starts the local stack (db, auth, rest, kong only; studio/storage/realtime/mail are disabled in `supabase/config.toml`) |
 | `pnpm run db:reset` | recreates the local database from `supabase/migrations/*` and `supabase/seed.sql` |
 | `pnpm run db:test` | runs the pgTAP suite in `supabase/tests/database/` (personas switch to the `authenticated`/`anon` roles with JWT claims) |
+| `pnpm run db:concurrency` | real parallel-session proof that duplicate deliveries yield one lead and distinct events get distinct numbers (synthetic data, cleans up) |
 | `pnpm run db:lint` | `supabase db lint --local --level error` |
 | `pnpm run db:migrations` | lists local migration status |
 | `pnpm run db:stop` | stops the local stack |
@@ -59,11 +60,19 @@ The local stack publishes ports 54321 (API) and 54322 (Postgres) through Docker 
 
 1. **Foundation** — this repository (done).
 2. **Schema/RLS** — tenancy tables, policies, isolation proofs (implemented and verified locally).
-3. **Trusted ingestion** — idempotent server-side lead creation for n8n.
+3. **Trusted ingestion** — database boundary implemented and verified locally (`ingest_lead_event`); the authenticated HTTP endpoint in front of it is not built yet.
 4. **Customer portal** — auth, lead workspace MVP.
 5. **Platform administration** — cross-tenant operations.
 6. **n8n cutover** — replace Google Sheets, add delivery callbacks (dev-cloned workflow, synthetic submissions, reconciliation, controlled cutover; Sheets retained only as an archived backup).
 7. **Production hardening** — custom SMTP, MFA, backups, deployment.
+
+## Trusted ingestion boundary (database side)
+
+`public.ingest_lead_event(p_source_kind, p_source_external_id, p_source_event_id, p_payload jsonb)` is a `SECURITY DEFINER` RPC executable **only by `service_role`** (revoked from `PUBLIC`, `anon`, `authenticated`). It performs one atomic operation: resolve the tenant **solely** from the registered `integration_sources (kind, external_id)` row (active source, active business — payload `business_id` is rejected), deduplicate on `business_id + source + complete source_event_id`, allocate a per-business `INQ-<year>-<nnnn>` number, and create the lead plus an `ingestion_events` row. It returns one row: `outcome` (`lead_created` | `duplicate_lead` | `filtered` | `duplicate_filtered`), `should_notify` (true **only** for `lead_created`), `customer_sms_allowed`, `business_id`, `lead_id`, `lead_number`, `ingestion_event_id`, `attempt_count`.
+
+Event identity: website submissions must carry a **stable submission ID generated once upstream and reused on retries** (the live workflow's per-execution random inquiry ID is not a replay key). Voice calls use the **complete Vapi call ID** as both `call_id` and `source_event_id`; a truncated suffix is rejected by constraint. Voice calls that are not `is_lead && call_classification = 'legitimate_lead'` are recorded as `filtered` ingestion events with sanitized metadata and no lead. Voice SMS consent is unsupported and must be `false`; website SMS consent requires complete evidence (text, version, source, timestamp).
+
+Not built yet: the authenticated HTTP endpoint that calls this RPC, any hosted Supabase project, the live n8n cutover, and notification (SMS) delivery.
 
 ## About `n8n/reference/current-live-workflow.sanitized.json`
 

@@ -38,8 +38,8 @@ select is((select count(*) from pg_policies where schemaname = 'public' and 'ano
   'no policy grants anything to anon');
 select is((select count(*) from pg_policies where schemaname = 'public' and roles = '{public}'), 0::bigint,
   'no policy is addressed to PUBLIC');
-select is((select count(*) from pg_policies where schemaname = 'public'), 7::bigint,
-  'exactly the 7 Batch 1 policies exist');
+select is((select count(*) from pg_policies where schemaname = 'public'), 8::bigint,
+  'exactly the 8 expected policies exist (7 Batch 1 + ingestion_events admin select)');
 
 -- ---- anon has no privileges at all ----------------------------------------
 select is((select bool_or(has_table_privilege('anon', t, p))
@@ -105,8 +105,8 @@ select is((select count(*) from pg_proc p join pg_namespace n on n.oid = p.prona
            where n.nspname = 'private'
              and not exists (select 1 from unnest(p.proconfig) c where c in ('search_path=', 'search_path=""'))), 0::bigint,
   'every private function pins an empty search_path');
-select is((select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public'), 0::bigint,
-  'no helper function leaked into the exposed public schema');
+select set_eq('select p.proname::text from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = $$public$$',
+  array['ingest_lead_event'], 'the only function in the exposed public schema is the privileged ingestion RPC');
 
 -- ---- defensive triggers present ----------------------------------------------
 select has_trigger('public', 'leads',                'trg_z_leads_protect_identity',                'leads identity trigger');

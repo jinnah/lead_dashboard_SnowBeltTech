@@ -8,6 +8,7 @@
     "db:stop": "supabase stop",
     "db:reset": "supabase db reset --local",
     "db:test": "supabase test db --local supabase/tests/database",
+    "db:concurrency": "node scripts/db-concurrency-check.mjs",
     "db:lint": "supabase db lint --local --level error",
     "db:status": "supabase status",
     "db:migrations": "supabase migration list --local"
