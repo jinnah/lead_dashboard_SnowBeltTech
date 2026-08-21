@@ -22,7 +22,7 @@ Verified prerequisites: Node 24, pnpm 11, Docker Desktop (daemon running). The S
 | `pnpm run db:migrations` | lists local migration status |
 | `pnpm run db:stop` | stops the local stack |
 
-The local stack publishes ports 54321 (API) and 54322 (Postgres) through Docker Desktop; the seed contains synthetic `.invalid` accounts only and local keys are never committed. Public signup is disabled in the local auth config.
+The local stack publishes ports 54321 (API) and 54322 (Postgres) through Docker Desktop. **Docker Desktop on Windows may publish these ports on broader interfaces than loopback** (the CLI's port mapping cannot pin a host IP); this is an acknowledged, temporary local-development limitation, not a property of the hosted production Supabase project, which is entirely separate. Therefore: use synthetic development data only (the seed contains `.invalid` accounts and fictitious numbers), develop on a trusted network with the host firewall enabled, and stop the stack (`pnpm run db:stop`) when not in use. Local keys are never committed. Public signup is disabled in the local auth config.
 
 ## Target users
 
