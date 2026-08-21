@@ -69,9 +69,11 @@ select * from public.ingest_lead_event('vapi_assistant', :'src_a_vapi', 'vapi-ca
 select is((select outcome || '|' || should_notify::text || '|' || customer_sms_allowed::text from f1), 'filtered|false|false', 'non-lead call is filtered, never notifies');
 select is((select lead_id is null and lead_number is null from f1), true, 'filtered result carries no lead');
 select is((select count(*) from public.leads where source_event_id = 'vapi-call-filtered-0001'), 0::bigint, 'filtered call created no lead');
-select is((select outcome || '|' || (metadata ->> 'filter_reason') || '|' || (metadata ->> 'call_classification') || '|' || (metadata ->> 'review_reason') from public.ingestion_events where source_event_id = 'vapi-call-filtered-0001'),
-  'filtered|not_a_lead|uncertain|Hung up early.', 'filtered event is auditable with sanitized metadata');
-select is((select metadata ? 'contact_name' or metadata ? 'caller_phone' from public.ingestion_events where source_event_id = 'vapi-call-filtered-0001'), false, 'filtered event stores no customer identity');
+select is((select outcome || '|' || (metadata ->> 'filter_reason') || '|' || (metadata ->> 'call_classification') || '|' || (metadata ->> 'review_recommended') from public.ingestion_events where source_event_id = 'vapi-call-filtered-0001'),
+  'filtered|not_a_lead|uncertain|true', 'filtered event is auditable with machine-readable metadata');
+select set_eq($$select jsonb_object_keys(metadata) from public.ingestion_events where source_event_id = 'vapi-call-filtered-0001'$$,
+  array['filter_reason', 'is_lead', 'call_classification', 'review_recommended', 'ended_reason'],
+  'filtered event metadata holds exactly the allow-listed keys (no review_reason, no contact data)');
 
 create temp table f2 as
 select * from public.ingest_lead_event('vapi_assistant', :'src_a_vapi', 'vapi-call-filtered-0002', '{"call_id":"vapi-call-filtered-0002","is_lead":true,"call_classification":"spam"}'::jsonb);
