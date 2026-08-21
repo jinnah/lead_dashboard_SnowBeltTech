@@ -1,0 +1,38 @@
+# --- Raw production workflow export: NEVER commit (contains live configuration) ---
+/SnowbeltTech - Form_call - Google Sheets and SMS.json
+
+# Environment and secrets (templates like .env.example are NOT ignored)
+.env
+.env.*
+!.env.example
+
+# Supabase local state
+supabase/.temp/
+supabase/.branches/
+**/.supabase/
+
+# Node dependencies, builds, caches
+node_modules/
+.next/
+out/
+dist/
+build/
+coverage/
+.turbo/
+*.tsbuildinfo
+
+# Private n8n working directory (future non-committable workflow drafts)
+n8n/private/
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs and temporary files
+*.log
+logs/
+tmp/
+*.tmp

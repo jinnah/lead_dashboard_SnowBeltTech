@@ -1,0 +1,548 @@
+{
+  "name": "SnowbeltTech - Form/call - Google Sheets and SMS",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Setup after import\n\n1. Open **Normalize and Configure** and replace the owner phone, Twilio number, and Google Sheet ID placeholders.\n2. Confirm that the SMS consent text exactly matches the checkbox on snowbelttech.com.\n3. Select your Google Sheets credential in both Google Sheets nodes.\n4. Select your Twilio credential in both Twilio nodes.\n5. Open each Google Sheets node and refresh the **Inquiries** sheet columns.\n6. Test with the Webhook Test URL, then activate the workflow and use the Production URL on the website.\n\nCustomer SMS is sent only when a valid US phone number and SMS consent are both present. The owner alert is always attempted after the inquiry is stored.",
+        "height": 430,
+        "width": 720,
+        "color": 5
+      },
+      "id": "4034edd1-1d89-4cdb-9b9a-0dc39a9e40a3",
+      "name": "Setup Instructions",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        672,
+        688
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ---------- EDIT THESE VALUES ----------\nconst CONFIG = {\n  businessName: 'SnowbeltTech',\n  ownerPhone: 'REDACTED_OWNER_PHONE',\n  twilioFromPhone: 'REDACTED_TWILIO_PHONE',\n  googleSheetId: 'REDACTED_SHEET_ID',\n  sheetTabName: 'Inquiries',\n  timezone: 'America/New_York',\n  smsConsentVersion: '2026-08-v1',\n  smsConsentText: 'By checking this box, I agree to receive text messages from SnowbeltTech regarding this request. Message frequency varies, typically 1-3 messages per inquiry. Message and data rates may apply. Reply STOP to opt out or HELP for help. Terms: https://snowbelttech.com/terms. Privacy: https://snowbelttech.com/privacy.'\n};\n// ---------------------------------------\n\nconst input = $json.body ?? $json;\n\nconst pick = (...keys) => {\n  for (const key of keys) {\n    const value = input[key];\n    if (value !== undefined && value !== null && String(value).trim() !== '') return value;\n  }\n  return '';\n};\n\nconst oneLine = (value) => String(value ?? '').replace(/\\s+/g, ' ').trim();\nconst multiLine = (value) => String(value ?? '').replace(/\\r\\n/g, '\\n').trim().slice(0, 5000);\n\nconst isChecked = (value) => {\n  if (Array.isArray(value)) return value.length > 0;\n  return ['true', 'yes', 'on', '1', 'checked'].includes(oneLine(value).toLowerCase());\n};\n\nconst normalizeUsPhone = (value) => {\n  const digits = String(value ?? '').replace(/\\D/g, '');\n  if (digits.length === 10) return '+1' + digits;\n  if (digits.length === 11 && digits.startsWith('1')) return '+' + digits;\n  return '';\n};\n\nconst safeSms = (value, maxLength = 155) => {\n  let text = oneLine(value)\n    .replace(/[\\u2018\\u2019]/g, \"'\")\n    .replace(/[\\u201c\\u201d]/g, '\"')\n    .replace(/[\\u2013\\u2014]/g, '-')\n    .replace(/\\u2026/g, '...')\n    .normalize('NFD')\n    .replace(/[\\u0300-\\u036f]/g, '')\n    .replace(/[^\\x20-\\x7E]/g, ' ');\n  text = oneLine(text);\n  return text.length > maxLength ? text.slice(0, maxLength - 3) + '...' : text;\n};\n\nconst name = oneLine(pick('name', 'Name'));\nconst businessName = oneLine(pick('businessName', 'business_name', 'Business Name'));\nconst email = oneLine(pick('email', 'Email')).toLowerCase();\nconst phoneRaw = oneLine(pick('phone', 'Phone'));\nconst phoneE164 = normalizeUsPhone(phoneRaw);\nconst businessType = oneLine(pick('businessType', 'business_type', 'Business Type'));\nconst toTextList = (value) => {\n  if (Array.isArray(value)) return value.flatMap(toTextList);\n  if (value && typeof value === 'object') return Object.values(value).flatMap(toTextList);\n  const text = oneLine(value);\n  return text ? [text] : [];\n};\n\nconst helpRaw = pick('helpRequested', 'help_requested', 'Help Requested', 'needs');\nconst helpRequested = toTextList(helpRaw).join(', ');\nconst improvementRaw = pick('improvementDetails', 'improvement_details', 'Improvement Details', 'goal');\nconst improvementDetails = multiLine(improvementRaw).replace(/^Tell us what you would like to improve:\\s*/i, '');\nconst preferredContact = oneLine(pick('preferredContact', 'preferred_contact', 'Preferred Contact'));\nconst emailMarketingConsent = isChecked(pick('emailMarketingConsent', 'email_marketing_consent', 'Email Marketing Consent'));\nconst smsConsent = isChecked(pick('smsConsent', 'sms_consent', 'SMS Consent'));\nconst validCustomerPhone = /^\\+1\\d{10}$/.test(phoneE164);\nconst canSendCustomerSms = validCustomerPhone && smsConsent;\nconst inquiryId = 'INQ-' + new Date().toISOString().slice(0, 10).replace(/-/g, '') + '-' + Math.random().toString(36).slice(2, 7).toUpperCase();\n\nlet submittedAt = new Date().toISOString();\ntry {\n  submittedAt = new Date().toLocaleString('en-US', { timeZone: CONFIG.timezone, hour12: false });\n} catch (error) {}\n\nconst contact = phoneE164 || email || phoneRaw || 'no contact provided';\nconst ownerSmsMessage = safeSms(CONFIG.businessName + ': New inquiry ' + inquiryId + ' from ' + (name || 'unnamed') + ', ' + contact + '. Help: ' + (helpRequested || 'not specified') + '. See Google Sheet.');\nconst customerSmsMessage = safeSms(CONFIG.businessName + ': Thanks for contacting us. We received your request and will follow up shortly. Replies are not monitored. Reply STOP to opt out.');\n\nreturn [{\n  json: {\n    ...CONFIG,\n    phoneE164,\n    phoneRaw,\n    validCustomerPhone,\n    canSendCustomerSms,\n    ownerSmsMessage,\n    customerSmsMessage,\n    inquiryId,\n    'Inquiry ID': inquiryId,\n    'Submitted At': submittedAt,\n    'Source': 'Web',\n    'Name': name,\n    'Business Name': businessName,\n    'Email': email,\n    'Phone': phoneE164,\n    'Phone (Raw)': phoneRaw,\n    'Business Type': businessType,\n    'Help Requested': helpRequested,\n    'Improvement Details': improvementDetails,\n    'Preferred Contact': preferredContact,\n    'Email Marketing Consent': emailMarketingConsent ? 'Yes' : 'No',\n    'SMS Consent': smsConsent ? 'Yes' : 'No',\n    'SMS Consent Text': smsConsent ? CONFIG.smsConsentText : '',\n    'SMS Consent Version': smsConsent ? CONFIG.smsConsentVersion : '',\n    'Customer SMS Status': 'Pending',\n    'Customer Message SID': '',\n    'Owner SMS Status': 'Pending',\n    'Owner Message SID': '',\n    'Processing Error': ''\n  }\n}];"
+      },
+      "id": "f360627b-57ab-4d5b-ae3a-9ce87ec30848",
+      "name": "Normalize and Configure",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        352,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $json.googleSheetId }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $json.sheetTabName }}",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "cellFormat": "RAW",
+          "handlingExtraData": "ignoreIt"
+        }
+      },
+      "id": "21dc1b0f-24cc-4994-bb6a-9d42d9e93fab",
+      "name": "Append Inquiry to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        608,
+        432
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "note": "credential references removed; reconfigure before any import"
+      }
+    },
+    {
+      "parameters": {
+        "from": "={{ $('Normalize Vapi Call').isExecuted ? $('Normalize Vapi Call').first().json.twilioFromPhone : $('Normalize and Configure').first().json.twilioFromPhone }}",
+        "to": "={{ $('Normalize Vapi Call').isExecuted ? $('Normalize Vapi Call').first().json.ownerPhone : $('Normalize and Configure').first().json.ownerPhone }}",
+        "message": "={{ $('Normalize Vapi Call').isExecuted ? $('Normalize Vapi Call').first().json.ownerSmsMessage : $('Normalize and Configure').first().json.ownerSmsMessage }}",
+        "options": {}
+      },
+      "id": "8be86225-2f5a-4e65-accc-473c19dfecc2",
+      "name": "Send Owner SMS",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [
+        864,
+        432
+      ],
+      "credentials": {
+        "note": "credential references removed; reconfigure before any import"
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Normalize Vapi Call').isExecuted\n  ? $('Normalize Vapi Call').first().json\n  : $('Normalize and Configure').first().json;\n\nconst result = $input.first().json;\n\nconst errorText = result.error\n  ? (\n      typeof result.error === 'string'\n        ? result.error\n        : (\n            result.error.message ||\n            result.error.description ||\n            JSON.stringify(result.error)\n          )\n    )\n  : '';\n\nreturn [\n  {\n    json: {\n      ...base,\n\n      ownerSmsStatus: errorText\n        ? (\n            'Failed: ' +\n            errorText\n          ).slice(0, 250)\n        : (\n            'Accepted by Twilio (' +\n            (result.status || 'queued') +\n            ')'\n          ),\n\n      ownerMessageSid:\n        result.sid || '',\n\n      processingError: errorText\n        ? (\n            'Owner SMS: ' +\n            errorText\n          ).slice(0, 500)\n        : '',\n    },\n  },\n];"
+      },
+      "id": "1601396d-9b73-439c-967f-76ccf55a615a",
+      "name": "Capture Owner SMS",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1104,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "dbdf8d49-c8ca-435b-9960-fd38bbaf6f65",
+              "leftValue": "={{ $json.canSendCustomerSms }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "acfbad1f-992e-4b50-9c74-4cf7e3b195f4",
+      "name": "Customer SMS Allowed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1344,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "from": "={{ $json.twilioFromPhone }}",
+        "to": "={{ $json.phoneE164 }}",
+        "message": "={{ $json.customerSmsMessage }}",
+        "options": {}
+      },
+      "id": "43fd203a-d687-4af2-8be5-bfb0b837f5bb",
+      "name": "Send Customer SMS",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [
+        1584,
+        304
+      ],
+      "credentials": {
+        "note": "credential references removed; reconfigure before any import"
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const context = $('Capture Owner SMS').first().json;\nconst result = $input.first().json;\nconst errorText = result.error\n  ? (typeof result.error === 'string' ? result.error : (result.error.message || result.error.description || JSON.stringify(result.error)))\n  : '';\nconst combinedError = [context.processingError, errorText ? 'Customer SMS: ' + errorText : ''].filter(Boolean).join(' | ').slice(0, 500);\n\nreturn [{ json: {\n  'Inquiry ID': context.inquiryId,\n  'Customer SMS Status': errorText ? ('Failed: ' + errorText).slice(0, 250) : 'Accepted by Twilio (' + (result.status || 'queued') + ')',\n  'Customer Message SID': result.sid || '',\n  'Owner SMS Status': context.ownerSmsStatus,\n  'Owner Message SID': context.ownerMessageSid,\n  'Processing Error': combinedError\n} }];"
+      },
+      "id": "d15a6ca7-be8c-4987-8d32-1c8984bc6889",
+      "name": "Capture Customer SMS",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1824,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const context = $input.first().json;\nlet status = 'Skipped - no SMS consent';\nif (!context.validCustomerPhone) {\n  status = context.phoneRaw ? 'Skipped - invalid US phone number' : 'Skipped - no phone number';\n}\n\nreturn [{ json: {\n  'Inquiry ID': context.inquiryId,\n  'Customer SMS Status': status,\n  'Customer Message SID': '',\n  'Owner SMS Status': context.ownerSmsStatus,\n  'Owner Message SID': context.ownerMessageSid,\n  'Processing Error': context.processingError || ''\n} }];"
+      },
+      "id": "5ec04e00-edd9-4fbf-8001-111a69ecaf09",
+      "name": "Record Customer SMS Skipped",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1584,
+        544
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Normalize Vapi Call').isExecuted ? $('Normalize Vapi Call').first().json.googleSheetId : $('Normalize and Configure').first().json.googleSheetId }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $('Normalize Vapi Call').isExecuted ? $('Normalize Vapi Call').first().json.sheetTabName : $('Normalize and Configure').first().json.sheetTabName }}",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Inquiry ID": "={{ $json['Inquiry ID'] }}",
+            "Customer SMS Status": "={{ $json['Customer SMS Status'] }}",
+            "Customer Message SID": "={{ $json['Customer Message SID'] }}",
+            "Owner SMS Status": "={{ $json['Owner SMS Status'] }}",
+            "Owner Message SID": "={{ $json['Owner Message SID'] }}",
+            "Processing Error": "={{ $json['Processing Error'] }}"
+          },
+          "matchingColumns": [
+            "Inquiry ID"
+          ],
+          "schema": [
+            {
+              "id": "Inquiry ID",
+              "displayName": "Inquiry ID",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Customer SMS Status",
+              "displayName": "Customer SMS Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Customer Message SID",
+              "displayName": "Customer Message SID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Owner SMS Status",
+              "displayName": "Owner SMS Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Owner Message SID",
+              "displayName": "Owner Message SID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Processing Error",
+              "displayName": "Processing Error",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "id": "488267c5-dcf6-4a86-ba71-2941c77110b5",
+      "name": "Update SMS Results in Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2080,
+        432
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "note": "credential references removed; reconfigure before any import"
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "REDACTED_WEBSITE_WEBHOOK_PATH",
+        "options": {
+          "allowedOrigins": "REDACTED_ALLOWED_ORIGINS",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "d6644726-06fa-43d7-8f38-a9a4bddf9fe1",
+      "name": "Webhook: Website Form ",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        112,
+        432
+      ],
+      "webhookId": "REDACTED_WEBHOOK_ID"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "REDACTED_VAPI_WEBHOOK_PATH",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        128,
+        176
+      ],
+      "id": "d4179741-6130-497a-b380-52c1aafa63e1",
+      "name": "Webhook: Vapi End of call",
+      "webhookId": "REDACTED_WEBHOOK_ID"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst body = input.body ?? input;\nconst message = body.message ?? body;\n\nconst CONFIG = {\n  // Copy the owner SMS destination from the website normalization node.\n  ownerPhone: 'REDACTED_OWNER_PHONE',\n\n  twilioFromPhone: 'REDACTED_TWILIO_PHONE',\n  googleSheetId: 'REDACTED_SHEET_ID',\n  sheetTabName: 'Inquiries',\n  timezone: 'America/New_York',\n  smsConsentVersion: '2026-08-v1',\n  smsConsentText:\n    'By checking this box, I agree to receive text messages from SnowbeltTech regarding this request. Message frequency varies, typically 1-3 messages per inquiry. Message and data rates may apply. Reply STOP to opt out or HELP for help. Terms: https://snowbelttech.com/terms. Privacy: https://snowbelttech.com/privacy.',\n};\n\nif (!/^\\+\\d{10,15}$/.test(CONFIG.ownerPhone)) {\n  throw new Error(\n    'Replace ownerPhone with the owner SMS destination in E.164 format.'\n  );\n}\n\nif (message.type !== 'end-of-call-report') {\n  return [];\n}\n\nfunction findLeadOutput(node) {\n  if (!node || typeof node !== 'object') return null;\n\n  const validNames = [\n    'SnowBelt Voice Lead',\n    'SnowBelt Voice Lead Data',\n  ];\n\n  if (\n    validNames.includes(node.name) &&\n    node.result &&\n    typeof node.result === 'object'\n  ) {\n    return node;\n  }\n\n  for (const value of Object.values(node)) {\n    const found = findLeadOutput(value);\n\n    if (found) {\n      return found;\n    }\n  }\n\n  return null;\n}\n\nfunction findCustomerNumber(node) {\n  if (!node || typeof node !== 'object') return null;\n\n  if (\n    node.customer &&\n    typeof node.customer === 'object' &&\n    node.customer.number\n  ) {\n    return node.customer.number;\n  }\n\n  for (const value of Object.values(node)) {\n    const found = findCustomerNumber(value);\n\n    if (found) {\n      return found;\n    }\n  }\n\n  return null;\n}\n\nfunction normalizeUSPhone(value) {\n  if (!value) return null;\n\n  const original = String(value).trim();\n\n  if (/^\\+\\d{10,15}$/.test(original)) {\n    return original;\n  }\n\n  const digits = original.replace(/\\D/g, '');\n\n  if (digits.length === 10) {\n    return `+1${digits}`;\n  }\n\n  if (digits.length === 11 && digits.startsWith('1')) {\n    return `+${digits}`;\n  }\n\n  return null;\n}\n\nfunction getRawUSPhone(value) {\n  if (!value) return '';\n\n  const digits = String(value).replace(/\\D/g, '');\n\n  if (digits.length === 11 && digits.startsWith('1')) {\n    return digits.slice(1);\n  }\n\n  return digits;\n}\n\nconst outputContainer = findLeadOutput(message);\n\nif (!outputContainer) {\n  throw new Error(\n    'SnowBelt Voice Lead result was not found in the Vapi end-of-call payload.'\n  );\n}\n\nconst lead = outputContainer.result;\nconst callerNumber = normalizeUSPhone(\n  findCustomerNumber(message)\n);\n\nlet callbackNumber = null;\n\nif (lead.useCallingNumber === true) {\n  callbackNumber = callerNumber;\n} else if (lead.alternateCallbackNumber) {\n  callbackNumber = normalizeUSPhone(\n    lead.alternateCallbackNumber\n  );\n}\n\nif (lead.useCallingNumber === true && !callbackNumber) {\n  throw new Error(\n    'The caller selected the calling number, but Vapi customer.number was not found.'\n  );\n}\n\nconst callId =\n  message.call?.id ??\n  input.headers?.['x-call-id'] ??\n  null;\n\nconst rawTimestamp = message.timestamp ?? Date.now();\n\nconst timestampMilliseconds =\n  rawTimestamp < 1000000000000\n    ? rawTimestamp * 1000\n    : rawTimestamp;\n\nconst receivedDate = new Date(timestampMilliseconds);\n\nif (Number.isNaN(receivedDate.getTime())) {\n  throw new Error('The Vapi timestamp is invalid.');\n}\n\nconst submittedAt = receivedDate.toLocaleString(\n  'en-US',\n  {\n    timeZone: CONFIG.timezone,\n    hour12: false,\n  }\n);\n\nconst datePart = new Intl.DateTimeFormat('en-CA', {\n  timeZone: CONFIG.timezone,\n  year: 'numeric',\n  month: '2-digit',\n  day: '2-digit',\n})\n  .format(receivedDate)\n  .replace(/-/g, '');\n\nconst idSuffix = String(callId ?? timestampMilliseconds)\n  .replace(/[^a-zA-Z0-9]/g, '')\n  .slice(-6)\n  .toUpperCase();\n\nconst inquiryId = `INQ-${datePart}-V${idSuffix}`;\n\nconst phoneRaw = getRawUSPhone(callbackNumber);\n\nconst validCustomerPhone =\n  typeof callbackNumber === 'string' &&\n  /^\\+\\d{10,15}$/.test(callbackNumber);\n\n// Voice-call SMS consent has not been implemented yet.\nconst smsConsent = false;\nconst canSendCustomerSms =\n  validCustomerPhone && smsConsent;\n\nconst displayName =\n  lead.fullName || 'Unknown caller';\n\nconst requestedHelp =\n  lead.serviceRequested || 'not specified';\n\nlet ownerContact = 'no callback number';\n\nif (callbackNumber) {\n  ownerContact = callbackNumber;\n} else if (callerNumber) {\n  ownerContact =\n    `${callerNumber} ` +\n    '(caller ID; callback not confirmed)';\n}\n\nconst ownerSmsMessage =\n  `SnowbeltTech: New voice inquiry ${inquiryId} ` +\n  `from ${displayName}, ${ownerContact}. ` +\n  `Help: ${requestedHelp}. See Google Sheet.`;\n\nconst customerSmsMessage =\n  'SnowbeltTech: Thanks for contacting us. ' +\n  'We received your request and will follow up shortly. ' +\n  'Replies are not monitored. Reply STOP to opt out.';\n\nconst endedReason =\n  message.endedReason ??\n  message.call?.endedReason ??\n  null;\n\nreturn [\n  {\n    json: {\n      // Shared normalized configuration and values.\n      source: 'voice_call',\n      leadId: callId,\n      callId,\n      receivedAt: receivedDate.toISOString(),\n\n      ownerPhone: CONFIG.ownerPhone,\n      twilioFromPhone: CONFIG.twilioFromPhone,\n      googleSheetId: CONFIG.googleSheetId,\n      sheetTabName: CONFIG.sheetTabName,\n      timezone: CONFIG.timezone,\n      smsConsentVersion: CONFIG.smsConsentVersion,\n      smsConsentText: CONFIG.smsConsentText,\n\n      phoneE164: callbackNumber,\n      phoneRaw,\n      callerPhone: callerNumber,\n      validCustomerPhone,\n      canSendCustomerSms,\n\n      ownerSmsMessage,\n      customerSmsMessage,\n      inquiryId,\n\n      // Original normalized voice fields.\n      fullName: lead.fullName ?? null,\n      phone: callbackNumber,\n      email: lead.email ?? null,\n      businessName: lead.businessName ?? null,\n      businessType: lead.businessType ?? null,\n      serviceRequested:\n        lead.serviceRequested ?? null,\n      inquiryDetails:\n        lead.inquiryDetails ?? null,\n      details:\n        lead.inquiryDetails ?? null,\n\n      preferredCallbackDate:\n        lead.preferredCallbackDate ?? null,\n      preferredCallbackTime:\n        lead.preferredCallbackTime ?? null,\n      callbackDateConfirmed:\n        lead.callbackDateConfirmed ?? false,\n\n      useCallingNumber:\n        lead.useCallingNumber ?? false,\n      alternateCallbackNumber:\n        lead.alternateCallbackNumber ?? null,\n\n      isLead: lead.isLead ?? false,\n      callClassification:\n        lead.callClassification ?? 'uncertain',\n      callSummary:\n        lead.callSummary ?? null,\n      reviewRecommended:\n        lead.reviewRecommended ?? false,\n      reviewReason:\n        lead.reviewReason ?? null,\n\n      smsConsent,\n      smsConsentSource: 'not_collected',\n      endedReason,\n      structuredOutputName:\n        outputContainer.name,\n\n      // Existing Google Sheet column names.\n      'Inquiry ID': inquiryId,\n      'Submitted At': submittedAt,\n      'Name': lead.fullName ?? '',\n      'Business Name':\n        lead.businessName ?? '',\n      'Email': lead.email ?? '',\n      'Phone': callbackNumber ?? '',\n      'Phone (Raw)': phoneRaw,\n      'Business Type':\n        lead.businessType ?? '',\n      'Help Requested':\n        lead.serviceRequested ?? '',\n      'Improvement Details':\n        lead.inquiryDetails ??\n        lead.callSummary ??\n        '',\n      'Preferred Contact': 'Phone',\n      'Email Marketing Consent': 'No',\n      'SMS Consent':\n        smsConsent ? 'Yes' : 'No',\n      'SMS Consent Text':\n        smsConsent\n          ? CONFIG.smsConsentText\n          : '',\n      'SMS Consent Version':\n        smsConsent\n          ? CONFIG.smsConsentVersion\n          : '',\n      'Customer SMS Status': 'Pending',\n      'Customer Message SID': '',\n      'Owner SMS Status': 'Pending',\n      'Owner Message SID': '',\n      'Processing Error': '',\n\n      // Voice-specific fields for additional Sheet columns.\n      'Source': 'Voice Call',\n      'Caller ID': callerNumber ?? '',\n      'Call ID': callId ?? '',\n      'Call Classification':\n        lead.callClassification ?? 'uncertain',\n      'Call Summary':\n        lead.callSummary ?? '',\n      'Preferred Callback Date':\n        lead.preferredCallbackDate ?? '',\n      'Preferred Callback Time':\n        lead.preferredCallbackTime ?? '',\n      'Review Recommended':\n        lead.reviewRecommended\n          ? 'Yes'\n          : 'No',\n      'Review Reason':\n        lead.reviewReason ?? '',\n    },\n  },\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        336,
+        176
+      ],
+      "id": "b3d67c34-155a-4a42-a87e-d80a53cb2639",
+      "name": "Normalize Vapi Call"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "e7894af9-4d29-4a12-b047-d8c18317bc19",
+              "leftValue": "={{ $json.isLead }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "f99ea2d9-43bb-4bed-9d84-b8c4b2b6e455",
+              "leftValue": "={{ $json.callClassification }}",
+              "rightValue": "legitimate_lead",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        544,
+        176
+      ],
+      "id": "f6744827-16f3-4c2a-9300-0785b354b406",
+      "name": "Process Voice Lead?"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Normalize and Configure": {
+      "main": [
+        [
+          {
+            "node": "Append Inquiry to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append Inquiry to Google Sheets": {
+      "main": [
+        [
+          {
+            "node": "Send Owner SMS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Owner SMS": {
+      "main": [
+        [
+          {
+            "node": "Capture Owner SMS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Capture Owner SMS": {
+      "main": [
+        [
+          {
+            "node": "Customer SMS Allowed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Customer SMS Allowed?": {
+      "main": [
+        [
+          {
+            "node": "Send Customer SMS",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record Customer SMS Skipped",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Customer SMS": {
+      "main": [
+        [
+          {
+            "node": "Capture Customer SMS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Capture Customer SMS": {
+      "main": [
+        [
+          {
+            "node": "Update SMS Results in Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Customer SMS Skipped": {
+      "main": [
+        [
+          {
+            "node": "Update SMS Results in Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook: Website Form ": {
+      "main": [
+        [
+          {
+            "node": "Normalize and Configure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook: Vapi End of call": {
+      "main": [
+        [
+          {
+            "node": "Normalize Vapi Call",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Vapi Call": {
+      "main": [
+        [
+          {
+            "node": "Process Voice Lead?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Voice Lead?": {
+      "main": [
+        [
+          {
+            "node": "Append Inquiry to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "REDACTED_VERSION_ID",
+  "meta": {
+    "note": "instance metadata removed for public reference copy"
+  },
+  "nodeGroups": [],
+  "id": "REDACTED_WORKFLOW_ID",
+  "tags": []
+}
