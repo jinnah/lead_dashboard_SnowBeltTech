@@ -4,7 +4,25 @@ A multi-tenant lead-management portal for local service businesses (HVAC, plumbi
 
 ## Current status
 
-**Repository foundation only.** No application, no Supabase environment, no database schema, and no production integration exists yet. The only committed artifact besides documentation is a sanitized reference copy of the currently live n8n workflow.
+**Foundation + local tenancy schema with Row Level Security (Batch 1).** The five tenancy tables (`businesses`, `profiles`, `business_memberships`, `integration_sources`, `leads`) exist as reproducible Supabase migrations with RLS enabled and forced, least-privilege grants, defensive immutability triggers, deterministic synthetic seed data and a pgTAP isolation test suite — all running **only on a local Docker Supabase stack**.
+
+**No hosted Supabase project is connected** (no `supabase login`/`link`, no remote database URL). No Next.js application, authentication UI, ingestion API, n8n change or production integration exists yet. The only other committed artifact is a sanitized reference copy of the currently live n8n workflow.
+
+## Local database development
+
+Verified prerequisites: Node 24, pnpm 11, Docker Desktop (daemon running). The Supabase CLI is a pinned dev dependency (`supabase@2.115.0` in `pnpm-lock.yaml`); no global install is required.
+
+| Command | What it does |
+|---|---|
+| `pnpm install` | installs the pinned Supabase CLI |
+| `pnpm run db:start` | starts the local stack (db, auth, rest, kong only; studio/storage/realtime/mail are disabled in `supabase/config.toml`) |
+| `pnpm run db:reset` | recreates the local database from `supabase/migrations/*` and `supabase/seed.sql` |
+| `pnpm run db:test` | runs the pgTAP suite in `supabase/tests/database/` (personas switch to the `authenticated`/`anon` roles with JWT claims) |
+| `pnpm run db:lint` | `supabase db lint --local --level error` |
+| `pnpm run db:migrations` | lists local migration status |
+| `pnpm run db:stop` | stops the local stack |
+
+The local stack publishes ports 54321 (API) and 54322 (Postgres) through Docker Desktop; the seed contains synthetic `.invalid` accounts only and local keys are never committed. Public signup is disabled in the local auth config.
 
 ## Target users
 
@@ -40,7 +58,7 @@ A multi-tenant lead-management portal for local service businesses (HVAC, plumbi
 ## Roadmap
 
 1. **Foundation** — this repository (done).
-2. **Schema/RLS** — tenancy tables, policies, isolation proofs.
+2. **Schema/RLS** — tenancy tables, policies, isolation proofs (implemented and verified locally).
 3. **Trusted ingestion** — idempotent server-side lead creation for n8n.
 4. **Customer portal** — auth, lead workspace MVP.
 5. **Platform administration** — cross-tenant operations.

@@ -1,0 +1,58 @@
+-- Test-only persona helpers. Included by test files via \ir; never part of a
+-- migration. Everything lives in pg_temp, so it disappears with the session.
+--
+-- Personas (deterministic ids from supabase/seed.sql):
+\set admin     '10000000-0000-4000-8000-000000000001'
+\set a_owner   'a1000000-0000-4000-8000-000000000001'
+\set a_manager 'a1000000-0000-4000-8000-000000000002'
+\set a_staff   'a1000000-0000-4000-8000-000000000003'
+\set a_former  'a1000000-0000-4000-8000-000000000004'
+\set b_owner   'b1000000-0000-4000-8000-000000000001'
+\set biz_a     'a0000000-0000-4000-8000-000000000001'
+\set biz_b     'b0000000-0000-4000-8000-000000000001'
+\set lead_a1   'aa000000-0000-4000-8000-000000000001'
+\set lead_a2   'aa000000-0000-4000-8000-000000000002'
+\set lead_a3   'aa000000-0000-4000-8000-000000000003'
+\set lead_b1   'bb000000-0000-4000-8000-000000000001'
+\set lead_b2   'bb000000-0000-4000-8000-000000000002'
+
+-- Become an authenticated user: JWT claims as PostgREST would set them, then
+-- switch the session to the `authenticated` database role (transaction-local).
+create or replace function pg_temp.login_as(p_user uuid)
+returns void
+language plpgsql
+as $$
+begin
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', p_user::text, 'role', 'authenticated', 'aud', 'authenticated')::text, true);
+  perform set_config('request.jwt.claim.sub', p_user::text, true);
+  perform set_config('request.jwt.claim.role', 'authenticated', true);
+  perform set_config('role', 'authenticated', true);
+end;
+$$;
+
+-- Become an anonymous visitor (`anon` role, no subject).
+create or replace function pg_temp.login_anon()
+returns void
+language plpgsql
+as $$
+begin
+  perform set_config('request.jwt.claims', json_build_object('role', 'anon')::text, true);
+  perform set_config('request.jwt.claim.sub', '', true);
+  perform set_config('request.jwt.claim.role', 'anon', true);
+  perform set_config('role', 'anon', true);
+end;
+$$;
+
+-- Back to the session's own role (postgres in the local runner) with no claims.
+create or replace function pg_temp.logout()
+returns void
+language plpgsql
+as $$
+begin
+  perform set_config('role', 'none', true);
+  perform set_config('request.jwt.claims', '', true);
+  perform set_config('request.jwt.claim.sub', '', true);
+  perform set_config('request.jwt.claim.role', '', true);
+end;
+$$;
