@@ -138,3 +138,24 @@ dl.kv { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 0
 dl.kv dt { color: var(--slate-500); }
 dl.kv dd { margin: 0; word-break: break-word; }
 .pre { white-space: pre-wrap; }
+
+/* ---- actions / notes / timeline ---- */
+.alert--success { background: var(--green-bg); color: var(--green-fg); }
+.actions { margin-bottom: 1.25rem; }
+.actions__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1.25rem; align-items: end; }
+.inline-form .field { margin-bottom: 0.6rem; }
+.inline-form--end { align-self: end; }
+.btn--secondary { background: var(--slate-200); color: var(--slate-900); }
+.btn--secondary:hover { background: var(--slate-300); }
+.card--wide { grid-column: 1 / -1; }
+.sub-h { margin-top: 1rem; font-size: 0.95rem; }
+.note-form { margin-bottom: 1.25rem; }
+.note-form textarea { resize: vertical; min-height: 4.5rem; }
+.timeline { list-style: none; margin: 0; padding: 0; border-left: 2px solid var(--slate-200); }
+.timeline__item { position: relative; padding: 0 0 1rem 1.25rem; }
+.timeline__item::before { content: ""; position: absolute; left: -7px; top: 0.35rem; width: 12px; height: 12px; border-radius: 50%; background: var(--ice-600); border: 2px solid var(--white); }
+.timeline__item--note_added::before { background: var(--amber-fg); }
+.timeline__meta { display: flex; gap: 0.6rem; flex-wrap: wrap; font-size: 0.8rem; color: var(--slate-500); }
+.timeline__who { font-weight: 600; color: var(--slate-700); }
+.timeline__what { font-size: 0.95rem; }
+.timeline__note { margin: 0.35rem 0 0; background: var(--slate-100); border-radius: 8px; padding: 0.6rem 0.8rem; font-size: 0.95rem; }

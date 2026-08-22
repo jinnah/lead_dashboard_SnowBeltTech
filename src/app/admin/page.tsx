@@ -88,7 +88,7 @@ export default async function AdminPage() {
       </section>
       <section aria-labelledby="recent-h">
         <h2 id="recent-h">Recent leads across customers</h2>
-        <LeadList leads={leads} timeZoneFor={(l) => tzById.get((l as AdminLeadRow).business_id ?? "") ?? "UTC"} linkBase={null} showBusiness emptyText="No leads yet." />
+        <LeadList leads={leads} timeZoneFor={(l) => tzById.get((l as AdminLeadRow).business_id ?? "") ?? "UTC"} linkBase="/admin/leads" showBusiness emptyText="No leads yet." />
       </section>
     </AppShell>
   );

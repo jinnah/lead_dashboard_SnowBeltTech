@@ -1,47 +1,20 @@
-import { Fragment } from "react";
+import { randomUUID } from "node:crypto";
 import { notFound, redirect } from "next/navigation";
+import { ActivityTimeline, type ActivityRow } from "@/components/activity-timeline";
 import { AppShell } from "@/components/app-shell";
-import { ReviewBadge, SourceBadge, StatusBadge, UrgencyBadge } from "@/components/badges";
-import { displayOrDash, formatDateTime, label, SOURCE_LABELS } from "@/lib/format";
+import { LEAD_DETAIL_COLUMNS, LeadHeader, LeadInfoSections, type LeadDetail } from "@/components/lead-detail-sections";
+import { StatusForm } from "@/components/status-form";
+import { LEAD_STATUSES } from "@/lib/access";
+import { STATUS_LABELS, formatDateTime } from "@/lib/format";
+import { ACTIONS, ERROR_MESSAGES, OK_MESSAGES, type ActionName } from "@/lib/lead-actions";
 import { getViewer } from "@/lib/server/viewer";
+import { utcToLocalParts } from "@/lib/timezone";
 
 export const dynamic = "force-dynamic";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-interface LeadDetail {
-  id: string;
-  business_id: string;
-  lead_number: string;
-  source: string;
-  status: string;
-  urgency: string;
-  contact_name: string;
-  email: string | null;
-  phone_e164: string | null;
-  phone_raw: string | null;
-  service_address: string | null;
-  requested_service: string | null;
-  details: string | null;
-  preferred_contact_method: string | null;
-  preferred_callback_at: string | null;
-  follow_up_at: string | null;
-  custom_fields: Record<string, unknown>;
-  email_marketing_consent: boolean;
-  sms_consent: boolean;
-  sms_consent_version: string | null;
-  sms_consent_source: string | null;
-  sms_consent_at: string | null;
-  caller_phone: string | null;
-  call_classification: string | null;
-  call_summary: string | null;
-  review_recommended: boolean;
-  review_reason: string | null;
-  ended_reason: string | null;
-  created_at: string;
-}
-
-export default async function LeadDetailPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function LeadDetailPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ ok?: string; err?: string }> }) {
   const viewer = await getViewer();
   if (!viewer) redirect("/login");
   if (viewer.access.kind === "admin") redirect("/admin");
@@ -49,70 +22,84 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
 
   const { id } = await params;
   if (!UUID.test(id)) notFound();
+  const { supabase } = viewer;
   // RLS decides visibility; anything not visible (other tenant, nonexistent) is an identical 404.
-  const { data: lead } = await viewer.supabase.from("leads").select("*").eq("id", id).is("archived_at", null).maybeSingle<LeadDetail>();
+  const { data: lead } = await supabase.from("leads").select(LEAD_DETAIL_COLUMNS).eq("id", id).is("archived_at", null).maybeSingle<LeadDetail>();
   if (!lead) notFound();
   const business = viewer.access.businesses.find((b) => b.id === lead.business_id);
   if (!business) notFound();
   const tz = business.timezone;
-  const custom = Object.entries(lead.custom_fields ?? {}).filter(([, v]) => v !== null && v !== "");
+
+  const { data: activities } = await supabase
+    .from("lead_activities")
+    .select("id, activity_type, old_value, new_value, note, actor_display_name, created_at")
+    .eq("lead_id", lead.id)
+    .order("created_at", { ascending: false })
+    .limit(200)
+    .returns<ActivityRow[]>();
+
+  // Feedback codes are allow-listed; submitted values never travel through the URL.
+  const sp = await searchParams;
+  const okMsg = sp.ok && (ACTIONS as readonly string[]).includes(sp.ok) ? OK_MESSAGES[sp.ok as ActionName] : null;
+  const errMsg = sp.err && sp.err in ERROR_MESSAGES ? ERROR_MESSAGES[sp.err as keyof typeof ERROR_MESSAGES] : null;
+
+  const actionUrl = `/api/leads/${lead.id}/actions`;
+  const followUp = lead.follow_up_at ? utcToLocalParts(lead.follow_up_at, tz) : null;
+  const noteRequestId = randomUUID(); // unique per render: resubmitting the same form is idempotent
 
   return (
     <AppShell subtitle="Lead Portal" userLabel={viewer.profile.display_name || viewer.email || "Signed in"} roleLabel="Customer">
       <div className="page-head">
         <div>
           <div className="eyebrow">{business.name}</div>
-          <h1>Lead {lead.lead_number}</h1>
-          <p className="muted">Received {formatDateTime(lead.created_at, tz)} · <SourceBadge source={lead.source} /></p>
+          <LeadHeader lead={lead} tz={tz} />
         </div>
         <a className="btn btn--link" href={`/dashboard?business=${encodeURIComponent(business.slug)}`}>← Back to leads</a>
       </div>
-      <div className="detail-grid">
-        <section className="card" aria-labelledby="contact-h">
-          <h2 id="contact-h">Contact</h2>
-          <dl className="kv">
-            <dt>Name</dt><dd>{displayOrDash(lead.contact_name)}</dd>
-            <dt>Phone</dt><dd>{lead.phone_e164 ? <a href={`tel:${lead.phone_e164}`}>{lead.phone_e164}</a> : "—"}{lead.phone_raw && lead.phone_raw !== lead.phone_e164 ? <span className="muted"> (entered: {lead.phone_raw})</span> : null}</dd>
-            <dt>Email</dt><dd>{lead.email ? <a href={`mailto:${lead.email}`}>{lead.email}</a> : "—"}</dd>
-            <dt>Address</dt><dd>{displayOrDash(lead.service_address)}</dd>
-            <dt>Prefers</dt><dd>{displayOrDash(lead.preferred_contact_method)}</dd>
-            <dt>Callback</dt><dd>{formatDateTime(lead.preferred_callback_at, tz)}</dd>
-          </dl>
-        </section>
-        <section className="card" aria-labelledby="request-h">
-          <h2 id="request-h">Request</h2>
-          <dl className="kv">
-            <dt>Status</dt><dd><StatusBadge status={lead.status} /></dd>
-            <dt>Urgency</dt><dd><UrgencyBadge urgency={lead.urgency} /></dd>
-            <dt>Service</dt><dd>{displayOrDash(lead.requested_service)}</dd>
-            <dt>Source</dt><dd>{label(SOURCE_LABELS, lead.source)}</dd>
-            <dt>Follow-up</dt><dd>{formatDateTime(lead.follow_up_at, tz)}</dd>
-            <dt>Review</dt><dd><ReviewBadge needed={lead.review_recommended} />{lead.review_reason ? <div className="muted">{lead.review_reason}</div> : null}</dd>
-          </dl>
-          {lead.details ? <><h3 style={{ marginTop: "1rem", fontSize: "0.95rem" }}>Details</h3><p className="pre">{lead.details}</p></> : null}
-          {custom.length > 0 ? (
-            <dl className="kv" style={{ marginTop: "0.75rem" }}>
-              {custom.map(([k, v]) => (<Fragment key={k}><dt>{k.replace(/_/g, " ")}</dt><dd>{String(v)}</dd></Fragment>))}
-            </dl>
+
+      {okMsg ? <div className="alert alert--success" role="status">{okMsg}</div> : null}
+      {errMsg ? <div className="alert alert--error" role="alert">{errMsg}</div> : null}
+
+      <section className="card actions" aria-labelledby="actions-h">
+        <h2 id="actions-h">Work this lead</h2>
+        <div className="actions__grid">
+          <StatusForm action={actionUrl} current={lead.status} options={LEAD_STATUSES.map((s) => ({ value: s, label: STATUS_LABELS[s] ?? s }))} />
+          <form method="post" action={actionUrl} className="inline-form">
+            <input type="hidden" name="action" value="set_follow_up" />
+            <label className="field">
+              <span className="field__label">Follow-up date</span>
+              <input className="field__input" type="date" name="date" required defaultValue={followUp?.date ?? ""} />
+            </label>
+            <label className="field">
+              <span className="field__label">Time ({tz})</span>
+              <input className="field__input" type="time" name="time" required defaultValue={followUp?.time ?? "09:00"} />
+            </label>
+            <button type="submit" className="btn btn--primary">{lead.follow_up_at ? "Reschedule" : "Schedule follow-up"}</button>
+          </form>
+          {lead.follow_up_at ? (
+            <form method="post" action={actionUrl} className="inline-form inline-form--end">
+              <input type="hidden" name="action" value="clear_follow_up" />
+              <p className="muted">Current follow-up: {formatDateTime(lead.follow_up_at, tz)}</p>
+              <button type="submit" className="btn btn--secondary">Clear follow-up</button>
+            </form>
           ) : null}
-        </section>
-        {lead.source === "voice_call" ? (
-          <section className="card" aria-labelledby="voice-h">
-            <h2 id="voice-h">Voice call</h2>
-            <dl className="kv">
-              <dt>Caller ID</dt><dd>{displayOrDash(lead.caller_phone)}</dd>
-              <dt>Classification</dt><dd>{displayOrDash(lead.call_classification)}</dd>
-              <dt>Ended</dt><dd>{displayOrDash(lead.ended_reason)}</dd>
-            </dl>
-            {lead.call_summary ? <><h3 style={{ marginTop: "1rem", fontSize: "0.95rem" }}>Summary</h3><p className="pre">{lead.call_summary}</p></> : null}
-          </section>
-        ) : null}
-        <section className="card" aria-labelledby="consent-h">
-          <h2 id="consent-h">Consent</h2>
-          <dl className="kv">
-            <dt>SMS</dt><dd>{lead.sms_consent ? `Granted · ${lead.sms_consent_version ?? ""} · ${label(SOURCE_LABELS, lead.sms_consent_source)} · ${formatDateTime(lead.sms_consent_at, tz)}` : "Not granted"}</dd>
-            <dt>Email marketing</dt><dd>{lead.email_marketing_consent ? "Granted" : "Not granted"}</dd>
-          </dl>
+        </div>
+      </section>
+
+      <div className="detail-grid">
+        <LeadInfoSections lead={lead} tz={tz} />
+        <section className="card card--wide" aria-labelledby="activity-h">
+          <h2 id="activity-h">Notes &amp; activity</h2>
+          <form method="post" action={actionUrl} className="note-form">
+            <input type="hidden" name="action" value="add_note" />
+            <input type="hidden" name="request_id" value={noteRequestId} />
+            <label className="field">
+              <span className="field__label">Add a note</span>
+              <textarea className="field__input" name="note" rows={3} maxLength={2000} required placeholder="What happened? (plain text, up to 2,000 characters)" />
+            </label>
+            <button type="submit" className="btn btn--primary">Add note</button>
+          </form>
+          <ActivityTimeline activities={activities ?? []} timeZone={tz} />
         </section>
       </div>
     </AppShell>
