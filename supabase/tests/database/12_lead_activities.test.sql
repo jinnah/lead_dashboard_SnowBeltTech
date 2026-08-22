@@ -44,13 +44,13 @@ select is((select activity_type || '|' || old_value || '|' || new_value || '|' |
 update public.leads set status = 'contacted' where id = :'lead_a1';   -- no-op
 select is((select count(*) from public.lead_activities where lead_id = :'lead_a1'), 1::bigint, 'no-op status update created no activity');
 update public.leads set follow_up_at = '2026-09-01T14:00:00Z' where id = :'lead_a1';
-select is((select old_value is null and new_value = '2026-09-01T14:00:00Z' from public.lead_activities where lead_id = :'lead_a1' and activity_type = 'follow_up_changed'), true, 'follow-up set is audited with ISO UTC values');
+select is((select old_value is null and new_value = '2026-09-01T14:00:00.000000Z' from public.lead_activities where lead_id = :'lead_a1' and activity_type = 'follow_up_changed'), true, 'follow-up set is audited with microsecond ISO UTC values');
 update public.leads set follow_up_at = null where id = :'lead_a1';
 select is((select count(*) from public.lead_activities where lead_id = :'lead_a1' and activity_type = 'follow_up_changed' and new_value is null), 1::bigint, 'clearing follow-up is audited');
 update public.leads set status = 'qualified', follow_up_at = '2026-09-02T09:00:00Z' where id = :'lead_a1';
 select is((select count(*) from public.lead_activities where lead_id = :'lead_a1'
              and ((activity_type = 'status_changed' and old_value = 'contacted' and new_value = 'qualified')
-               or (activity_type = 'follow_up_changed' and old_value is null and new_value = '2026-09-02T09:00:00Z'))),
+               or (activity_type = 'follow_up_changed' and old_value is null and new_value = '2026-09-02T09:00:00.000000Z'))),
   2::bigint, 'changing both fields produces one deterministic record per field');
 select is((select count(*) from public.lead_activities), 5::bigint, 'staff A reads the 5 activities of its business');
 select throws_ok(format($$insert into public.lead_activities (business_id, lead_id, activity_type, old_value, new_value) values (%L, %L, 'status_changed', 'new', 'won')$$, :'biz_a', :'lead_a1'), '42501', null, 'customer cannot fabricate an activity directly');
