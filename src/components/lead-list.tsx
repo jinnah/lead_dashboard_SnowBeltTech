@@ -1,0 +1,99 @@
+import { displayOrDash, formatDateTime } from "@/lib/format";
+import { ReviewBadge, SourceBadge, StatusBadge, UrgencyBadge } from "./badges";
+
+export interface LeadListRow {
+  id: string;
+  lead_number: string;
+  contact_name: string;
+  phone_e164: string | null;
+  email: string | null;
+  requested_service: string | null;
+  source: string;
+  status: string;
+  urgency: string;
+  review_recommended: boolean;
+  created_at: string;
+  /** Only present on the administrator overview. */
+  business_name?: string;
+}
+
+export function LeadList({
+  leads,
+  timeZoneFor,
+  linkBase,
+  showBusiness = false,
+  emptyText,
+}: {
+  leads: LeadListRow[];
+  timeZoneFor: (lead: LeadListRow) => string;
+  linkBase: string | null;
+  showBusiness?: boolean;
+  emptyText: string;
+}) {
+  if (leads.length === 0) {
+    return (
+      <div className="card">
+        <div className="empty">{emptyText}</div>
+      </div>
+    );
+  }
+  const num = (l: LeadListRow) => (linkBase ? <a href={`${linkBase}/${l.id}`}>{l.lead_number}</a> : <strong>{l.lead_number}</strong>);
+  return (
+    <>
+      <div className="table-wrap">
+        <table className="leads">
+          <thead>
+            <tr>
+              <th scope="col">Lead</th>
+              {showBusiness ? <th scope="col">Business</th> : null}
+              <th scope="col">Contact</th>
+              <th scope="col">Phone</th>
+              <th scope="col">Email</th>
+              <th scope="col">Service</th>
+              <th scope="col">Source</th>
+              <th scope="col">Status</th>
+              <th scope="col">Urgency</th>
+              <th scope="col">Received</th>
+              <th scope="col">Review</th>
+            </tr>
+          </thead>
+          <tbody>
+            {leads.map((l) => (
+              <tr key={l.id}>
+                <td>{num(l)}</td>
+                {showBusiness ? <td>{l.business_name ?? "—"}</td> : null}
+                <td>{displayOrDash(l.contact_name)}</td>
+                <td>{l.phone_e164 ? <a href={`tel:${l.phone_e164}`}>{l.phone_e164}</a> : "—"}</td>
+                <td>{l.email ? <a href={`mailto:${l.email}`}>{l.email}</a> : "—"}</td>
+                <td>{displayOrDash(l.requested_service)}</td>
+                <td><SourceBadge source={l.source} /></td>
+                <td><StatusBadge status={l.status} /></td>
+                <td><UrgencyBadge urgency={l.urgency} /></td>
+                <td>{formatDateTime(l.created_at, timeZoneFor(l))}</td>
+                <td><ReviewBadge needed={l.review_recommended} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="lead-cards" role="list">
+        {leads.map((l) => (
+          <article className="lead-card" role="listitem" key={l.id}>
+            <div className="lead-card__row">
+              <strong>{num(l)}</strong>
+              <StatusBadge status={l.status} />
+            </div>
+            {showBusiness ? <div className="lead-card__row"><span>Business</span><span>{l.business_name ?? "—"}</span></div> : null}
+            <div className="lead-card__row"><span>Contact</span><span>{displayOrDash(l.contact_name)}</span></div>
+            <div className="lead-card__row"><span>Phone</span><span>{l.phone_e164 ?? "—"}</span></div>
+            <div className="lead-card__row"><span>Service</span><span>{displayOrDash(l.requested_service)}</span></div>
+            <div className="lead-card__row"><span>Source</span><SourceBadge source={l.source} /></div>
+            <div className="lead-card__row"><span>Urgency</span><UrgencyBadge urgency={l.urgency} /></div>
+            <div className="lead-card__row"><span>Received</span><span>{formatDateTime(l.created_at, timeZoneFor(l))}</span></div>
+            {l.review_recommended ? <div className="lead-card__row"><span>Review</span><ReviewBadge needed /></div> : null}
+          </article>
+        ))}
+      </div>
+    </>
+  );
+}

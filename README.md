@@ -4,9 +4,9 @@ A multi-tenant lead-management portal for local service businesses (HVAC, plumbi
 
 ## Current status
 
-**Foundation + local tenancy schema with RLS + trusted ingestion database boundary + a minimal Next.js application with the authenticated n8n ingestion endpoint (Batches 1–2B).** The tenancy tables (`businesses`, `profiles`, `business_memberships`, `integration_sources`, `leads`), the operational `ingestion_events` ledger, an internal lead-number allocator and the privileged `ingest_lead_event` RPC exist as reproducible Supabase migrations with RLS enabled and forced, least-privilege grants, defensive immutability triggers, deterministic synthetic seed data and a pgTAP test suite — all running **only on a local Docker Supabase stack**.
+**Foundation + local tenancy schema with RLS + trusted ingestion database boundary + Next.js application with the authenticated n8n ingestion endpoint and real Supabase Auth sign-in with customer and administrator dashboards (Batches 1–3A).** The tenancy tables (`businesses`, `profiles`, `business_memberships`, `integration_sources`, `leads`), the operational `ingestion_events` ledger, an internal lead-number allocator and the privileged `ingest_lead_event` RPC exist as reproducible Supabase migrations with RLS enabled and forced, least-privilege grants, defensive immutability triggers, deterministic synthetic seed data and a pgTAP test suite — all running **only on a local Docker Supabase stack**.
 
-**No hosted Supabase project is connected** (no `supabase login`/`link`, no remote database URL). The Next.js application exists locally with exactly one server-to-server endpoint; customer authentication, dashboards, platform administration, Twilio callbacks, the live n8n cutover and any production integration do not exist yet. The only other committed artifact is a sanitized reference copy of the currently live n8n workflow.
+**No hosted Supabase project is connected** (no `supabase login`/`link`, no remote database URL). The Next.js application runs locally with real Supabase Auth sign-in, a read-only customer lead dashboard, a read-only platform-administrator overview and the server-to-server ingestion endpoint. Invitations, password reset, MFA, lead editing/notes/assignment, CSV export, Twilio callbacks, the live n8n cutover and any production integration do not exist yet. The only other committed artifact is a sanitized reference copy of the currently live n8n workflow.
 
 ## Local database development
 
@@ -61,7 +61,7 @@ The local stack publishes ports 54321 (API) and 54322 (Postgres) through Docker 
 1. **Foundation** — this repository (done).
 2. **Schema/RLS** — tenancy tables, policies, isolation proofs (implemented and verified locally).
 3. **Trusted ingestion** — database boundary (`ingest_lead_event`) and the authenticated local HTTP endpoint implemented and verified locally.
-4. **Customer portal** — auth, lead workspace MVP.
+4. **Customer portal** — real Supabase Auth sign-in, read-only customer dashboard and lead detail, read-only admin overview (implemented locally); editing, notes, export, invitations and password reset pending.
 5. **Platform administration** — cross-tenant operations.
 6. **n8n cutover** — replace Google Sheets, add delivery callbacks (dev-cloned workflow, synthetic submissions, reconciliation, controlled cutover; Sheets retained only as an archived backup).
 7. **Production hardening** — custom SMTP, MFA, backups, deployment.
@@ -74,9 +74,24 @@ The application runs only on the loopback interface. Sequence:
 2. `pnpm run db:start` — local Supabase (see the Docker networking note above; stop it when idle)
 3. `pnpm run env:local` — reads the running local stack, generates a random 64-hex n8n ingestion token and writes the git-ignored `.env.local` (refuses non-local Supabase URLs, refuses to overwrite unless `-- --force`, never prints secrets)
 4. `pnpm dev` (or `pnpm build && pnpm start`) — serves `http://127.0.0.1:3000` only
-5. `pnpm typecheck`, `pnpm lint`, `pnpm test` (unit), `pnpm run test:integration` (spawns the production server and drives the real HTTP → Supabase path; needs steps 2–3 and a prior `pnpm build`)
+5. `pnpm typecheck`, `pnpm lint`, `pnpm test` (unit), `pnpm run test:integration` (spawns the production server; drives the real HTTP → Supabase ingestion path and real Supabase Auth sign-in/dashboard sessions; needs steps 2–3 and a prior `pnpm build`)
 
 Configuration (`.env.example` documents placeholders): `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` are **browser-safe public values** (the anon/publishable key is not a secret). `SUPABASE_SERVICE_ROLE_KEY` and `N8N_INGEST_TOKEN` are **server-only secrets**: they are read exclusively inside `src/lib/server/*` (modules marked `server-only`), are never prefixed `NEXT_PUBLIC_`, and `.env.local` is ignored by git. Never confuse the anon key with the service-role key.
+
+### Signing in locally (synthetic accounts)
+
+After `pnpm run db:start`, `pnpm run env:local` and `pnpm dev` (or `pnpm build && pnpm start`), open `http://127.0.0.1:3000`. The seed provides local-only accounts, all with the password `local-seed-only` (defined in `supabase/seed.sql`; `.invalid` addresses never receive mail):
+
+| Account | Role | Lands on |
+|---|---|---|
+| `owner-a@example.invalid`, `manager-a@example.invalid`, `staff-a@example.invalid` | Business A (Alpha HVAC) members | `/dashboard` |
+| `owner-b@example.invalid` | Business B (Bravo Plumbing) owner | `/dashboard` |
+| `platform-admin@example.invalid` | Platform administrator | `/admin` |
+| `former-staff-a@example.invalid` | inactive membership | `/no-access` |
+
+Routes: `/` routes by server-validated access (no session → `/login`; admin → `/admin`; active customer → `/dashboard`; otherwise `/no-access`); `/dashboard` (summary cards, filterable recent leads, `?business=<slug>` honoured only if authorized); `/dashboard/leads/<id>` (read-only detail; anything not visible through RLS is an identical 404); `/admin` (businesses with status and lead counts, recent leads across customers); `POST /api/auth/login` and `POST /api/auth/logout` (form posts, same-site checked). Public signup is disabled in `supabase/config.toml` (`[auth] enable_signup = false`); `[auth.email] enable_signup = true` only enables the email provider so password sign-in works.
+
+How access is decided: pages use a per-request Supabase client with the **public anon key** and the user's httpOnly session cookies, so every query runs as `authenticated` under RLS. Identity is validated with the Auth server (`auth.getUser()`), then the user's own `profiles` row (system-managed `platform_role`, `is_active`) and the RLS-visible `businesses` determine access — an inactive profile, inactive membership, or suspended/archived business removes access on the next request. The service-role client is never used by pages; it remains confined to `/api/internal/ingest`, which the session proxy (`src/proxy.ts`) excludes entirely. Protected responses are `Cache-Control: private, no-store`.
 
 ### Internal ingestion endpoint
 
