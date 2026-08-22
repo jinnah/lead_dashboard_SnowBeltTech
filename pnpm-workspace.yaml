@@ -1,0 +1,4 @@
+# Install-time build scripts. unrs-resolver (optional native resolver used by
+# eslint-import) ships prebuilt binaries; its build script is deliberately not run.
+allowBuilds:
+  unrs-resolver: false

@@ -4,9 +4,9 @@ A multi-tenant lead-management portal for local service businesses (HVAC, plumbi
 
 ## Current status
 
-**Foundation + local tenancy schema with RLS + trusted ingestion database boundary (Batches 1–2A).** The tenancy tables (`businesses`, `profiles`, `business_memberships`, `integration_sources`, `leads`), the operational `ingestion_events` ledger, an internal lead-number allocator and the privileged `ingest_lead_event` RPC exist as reproducible Supabase migrations with RLS enabled and forced, least-privilege grants, defensive immutability triggers, deterministic synthetic seed data and a pgTAP test suite — all running **only on a local Docker Supabase stack**.
+**Foundation + local tenancy schema with RLS + trusted ingestion database boundary + a minimal Next.js application with the authenticated n8n ingestion endpoint (Batches 1–2B).** The tenancy tables (`businesses`, `profiles`, `business_memberships`, `integration_sources`, `leads`), the operational `ingestion_events` ledger, an internal lead-number allocator and the privileged `ingest_lead_event` RPC exist as reproducible Supabase migrations with RLS enabled and forced, least-privilege grants, defensive immutability triggers, deterministic synthetic seed data and a pgTAP test suite — all running **only on a local Docker Supabase stack**.
 
-**No hosted Supabase project is connected** (no `supabase login`/`link`, no remote database URL). No Next.js application, authentication UI, ingestion API, n8n change or production integration exists yet. The only other committed artifact is a sanitized reference copy of the currently live n8n workflow.
+**No hosted Supabase project is connected** (no `supabase login`/`link`, no remote database URL). The Next.js application exists locally with exactly one server-to-server endpoint; customer authentication, dashboards, platform administration, Twilio callbacks, the live n8n cutover and any production integration do not exist yet. The only other committed artifact is a sanitized reference copy of the currently live n8n workflow.
 
 ## Local database development
 
@@ -60,11 +60,46 @@ The local stack publishes ports 54321 (API) and 54322 (Postgres) through Docker 
 
 1. **Foundation** — this repository (done).
 2. **Schema/RLS** — tenancy tables, policies, isolation proofs (implemented and verified locally).
-3. **Trusted ingestion** — database boundary implemented and verified locally (`ingest_lead_event`); the authenticated HTTP endpoint in front of it is not built yet.
+3. **Trusted ingestion** — database boundary (`ingest_lead_event`) and the authenticated local HTTP endpoint implemented and verified locally.
 4. **Customer portal** — auth, lead workspace MVP.
 5. **Platform administration** — cross-tenant operations.
 6. **n8n cutover** — replace Google Sheets, add delivery callbacks (dev-cloned workflow, synthetic submissions, reconciliation, controlled cutover; Sheets retained only as an archived backup).
 7. **Production hardening** — custom SMTP, MFA, backups, deployment.
+
+## Local application (Next.js)
+
+The application runs only on the loopback interface. Sequence:
+
+1. `pnpm install --frozen-lockfile`
+2. `pnpm run db:start` — local Supabase (see the Docker networking note above; stop it when idle)
+3. `pnpm run env:local` — reads the running local stack, generates a random 64-hex n8n ingestion token and writes the git-ignored `.env.local` (refuses non-local Supabase URLs, refuses to overwrite unless `-- --force`, never prints secrets)
+4. `pnpm dev` (or `pnpm build && pnpm start`) — serves `http://127.0.0.1:3000` only
+5. `pnpm typecheck`, `pnpm lint`, `pnpm test` (unit), `pnpm run test:integration` (spawns the production server and drives the real HTTP → Supabase path; needs steps 2–3 and a prior `pnpm build`)
+
+Configuration (`.env.example` documents placeholders): `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` are **browser-safe public values** (the anon/publishable key is not a secret). `SUPABASE_SERVICE_ROLE_KEY` and `N8N_INGEST_TOKEN` are **server-only secrets**: they are read exclusively inside `src/lib/server/*` (modules marked `server-only`), are never prefixed `NEXT_PUBLIC_`, and `.env.local` is ignored by git. Never confuse the anon key with the service-role key.
+
+### Internal ingestion endpoint
+
+`POST /api/internal/ingest` — the only route. It is a server-to-server endpoint for n8n: `Authorization: Bearer <N8N_INGEST_TOKEN>` (constant-time comparison; missing, malformed, wrong or multiple bearer values → opaque `401 {"error":"unauthorized"}`), JSON only, 64 KiB body cap (streamed bytes counted, so chunked requests are capped too), no cookies, no CORS, never cached, Node.js runtime. After validation it calls the privileged database RPC `ingest_lead_event` through a server-only service-role client; the business is resolved **only** from the registered integration source — a `business_id` anywhere in the request is rejected.
+
+```json
+{
+  "source_kind": "website_form",
+  "source_external_id": "site-alpha-synthetic",
+  "source_event_id": "stable-form-submission-0001",
+  "payload": {
+    "contact_name": "Synthetic Customer",
+    "email": "customer@example.invalid",
+    "phone_e164": "+15550100001",
+    "requested_service": "Furnace inspection",
+    "sms_consent": false
+  }
+}
+```
+
+`curl -X POST http://127.0.0.1:3000/api/internal/ingest -H "Authorization: Bearer <token-from-.env.local>" -H "Content-Type: application/json" --data @request.json`
+
+Responses: `201` `lead_created` (with `should_notify: true`), `200` for `duplicate_lead` / `filtered` / `duplicate_filtered` (always `should_notify: false`); body is `{outcome, should_notify, customer_sms_allowed, lead_id, lead_number}` only — never `business_id`, customer details or database errors. Errors: `401` auth, `405` method, `415` content type, `413` size, `400` malformed JSON, `422 {"error":"invalid_request","issues":[{path,message}]}` (paths only, never values), `403 {"error":"source_not_accepted"}` for unknown/inactive sources and suspended/archived businesses alike, `503` database unavailable, `500` generic. Voice events use `source_kind` `vapi_assistant` or `vapi_phone_number` with `payload.call_id` equal to the complete `source_event_id`.
 
 ## Trusted ingestion boundary (database side)
 
@@ -72,7 +107,7 @@ The local stack publishes ports 54321 (API) and 54322 (Postgres) through Docker 
 
 Event identity: website submissions must carry a **stable submission ID generated once upstream and reused on retries** (the live workflow's per-execution random inquiry ID is not a replay key). Voice calls use the **complete Vapi call ID** as both `call_id` and `source_event_id`; a truncated suffix is rejected by constraint. Voice calls that are not `is_lead && call_classification = 'legitimate_lead'` are recorded as `filtered` ingestion events with no lead and an allow-listed, machine-readable metadata set only (`filter_reason`, `is_lead`, `call_classification`, `review_recommended`, `ended_reason` — never free text or contact data). Supplied timestamps must carry an explicit timezone (`Z` or `±HH:MM`); `source_event_id` is stored exactly as received (surrounding whitespace is rejected). Voice SMS consent is unsupported and must be `false`; website SMS consent requires complete evidence (text, version, source, timestamp).
 
-Not built yet: the authenticated HTTP endpoint that calls this RPC, any hosted Supabase project, the live n8n cutover, and notification (SMS) delivery.
+Not built yet: any hosted Supabase project, the live n8n cutover, customer authentication/dashboards, and notification (SMS) delivery.
 
 ## About `n8n/reference/current-live-workflow.sanitized.json`
 
