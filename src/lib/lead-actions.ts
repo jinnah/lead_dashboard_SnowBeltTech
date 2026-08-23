@@ -78,7 +78,12 @@ export function parseLeadAction(fields: URLSearchParams, businessTimeZone: strin
       return { ok: true, action: { kind: "add_note", note, requestId } };
     }
     case "set_assignee": {
-      const raw = (fields.get("assignee_id") ?? "").trim();
+      // Intent must be explicit: exactly ONE assignee_id field. An explicitly
+      // present empty value means "unassign"; a missing field, duplicate fields
+      // (ambiguous) or a whitespace-only value are rejected, never guessed.
+      const values = fields.getAll("assignee_id");
+      if (values.length !== 1) return { ok: false, error: "invalid_assignee" };
+      const raw = values[0]!;
       if (raw === "") return { ok: true, action: { kind: "set_assignee", assigneeId: null } };
       if (!ANY_UUID.test(raw)) return { ok: false, error: "invalid_assignee" };
       return { ok: true, action: { kind: "set_assignee", assigneeId: raw.toLowerCase() } };

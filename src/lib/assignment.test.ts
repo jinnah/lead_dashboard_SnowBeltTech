@@ -11,11 +11,29 @@ const OWNER = "a1000000-0000-4000-8000-000000000001";
 const B_OWNER = "b1000000-0000-4000-8000-000000000001";
 
 describe("set_assignee action parsing", () => {
-  it("accepts a UUID assignee and an empty value for unassignment", () => {
+  const INVALID = { ok: false, error: "invalid_assignee" };
+  it("accepts exactly one UUID assignee (normalized to lowercase)", () => {
     expect(p(`action=set_assignee&assignee_id=${STAFF}`)).toEqual({ ok: true, action: { kind: "set_assignee", assigneeId: STAFF } });
     expect(p(`action=set_assignee&assignee_id=${STAFF.toUpperCase()}`)).toEqual({ ok: true, action: { kind: "set_assignee", assigneeId: STAFF } });
+  });
+  it("treats exactly one explicitly empty assignee_id as intentional unassignment", () => {
     expect(p("action=set_assignee&assignee_id=")).toEqual({ ok: true, action: { kind: "set_assignee", assigneeId: null } });
-    expect(p("action=set_assignee")).toEqual({ ok: true, action: { kind: "set_assignee", assigneeId: null } });
+  });
+  it("rejects a missing assignee_id instead of guessing unassignment", () => {
+    expect(p("action=set_assignee")).toEqual(INVALID);
+  });
+  it("rejects whitespace-only and whitespace-padded values", () => {
+    expect(p("action=set_assignee&assignee_id=%20")).toEqual(INVALID);
+    expect(p("action=set_assignee&assignee_id=+++")).toEqual(INVALID);
+    expect(p("action=set_assignee&assignee_id=%09%0A")).toEqual(INVALID);
+    expect(p(`action=set_assignee&assignee_id=%20${STAFF}%20`)).toEqual(INVALID);
+  });
+  it("rejects ambiguous duplicate assignee_id fields in every combination", () => {
+    expect(p(`action=set_assignee&assignee_id=&assignee_id=${STAFF}`)).toEqual(INVALID); // empty then valid
+    expect(p(`action=set_assignee&assignee_id=${STAFF}&assignee_id=`)).toEqual(INVALID); // valid then empty
+    expect(p(`action=set_assignee&assignee_id=${STAFF}&assignee_id=${STAFF}`)).toEqual(INVALID); // identical valid values
+    expect(p(`action=set_assignee&assignee_id=${STAFF}&assignee_id=${MANAGER}`)).toEqual(INVALID); // two different valid values
+    expect(p("action=set_assignee&assignee_id=&assignee_id=")).toEqual(INVALID); // two empties
   });
   it("rejects malformed ids and unexpected fields (tenant/actor/role/flags/columns)", () => {
     expect(p("action=set_assignee&assignee_id=not-a-uuid")).toEqual({ ok: false, error: "invalid_assignee" });

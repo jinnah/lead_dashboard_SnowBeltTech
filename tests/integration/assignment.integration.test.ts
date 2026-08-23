@@ -5,6 +5,7 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
+import { createClient } from "@supabase/supabase-js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 const ROOT = path.resolve(__dirname, "../..");
@@ -30,6 +31,9 @@ function env(name: string): string {
 }
 const SERVICE_KEY = env("SUPABASE_SERVICE_ROLE_KEY");
 const INGEST_TOKEN = env("N8N_INGEST_TOKEN");
+const SUPABASE_URL = env("NEXT_PUBLIC_SUPABASE_URL");
+const ANON_KEY = env("NEXT_PUBLIC_SUPABASE_ANON_KEY");
+const ADMIN = "10000000-0000-4000-8000-000000000001";
 
 function sql(q: string): string {
   const r = spawnSync("docker", ["exec", CONTAINER, "psql", "-U", "postgres", "-d", "postgres", "-Atq", "-v", "ON_ERROR_STOP=1", "-c", q], { encoding: "utf8" });
@@ -56,10 +60,14 @@ class Session {
     return { status: res.status, location: res.headers.get("location"), text: await res.text(), headers: res.headers };
   }
   async post(p: string, form: Record<string, string>, extra: Record<string, string> = {}) {
+    return this.postRaw(p, new URLSearchParams(form).toString(), extra);
+  }
+  /** Crafted urlencoded body (duplicate / missing / odd fields a browser form would never send). */
+  async postRaw(p: string, body: string, extra: Record<string, string> = {}) {
     const res = await fetch(BASE + p, {
       method: "POST",
       headers: { cookie: this.header(), "content-type": "application/x-www-form-urlencoded", origin: BASE, ...extra },
-      body: new URLSearchParams(form).toString(),
+      body,
       redirect: "manual",
     });
     this.absorb(res);
@@ -97,7 +105,8 @@ afterAll(() => {
   if (server?.pid) {
     if (process.platform === "win32") spawnSync("taskkill", ["/PID", String(server.pid), "/T", "/F"]); else server.kill("SIGTERM");
   }
-  sql(`update public.businesses set status = 'active' where id = '${BIZ_A}';
+  sql(`delete from public.business_memberships where user_id = '${ADMIN}';
+       update public.businesses set status = 'active' where id = '${BIZ_A}';
        update public.business_memberships set status = 'active' where user_id in ('${A_OWNER}', '${A_MANAGER}', '${A_STAFF}');
        update public.profiles set is_active = true;
        update public.leads set assigned_to = '${A_MANAGER}' where id = '${LEAD_A1}';
@@ -169,6 +178,60 @@ describe("assignment authorization", () => {
   });
 });
 
+describe("dual-role platform administrator (corrective hardening)", () => {
+  // state now: A3 -> staff (from the authorization tests). The administrator is
+  // temporarily given a REAL active owner/manager membership in Business A.
+  const withAdminMembership = async (role: "BUSINESS_OWNER" | "BUSINESS_MANAGER", fn: () => Promise<void>) => {
+    sql(`insert into public.business_memberships (business_id, user_id, role, status) values ('${BIZ_A}', '${ADMIN}', '${role}', 'active')
+         on conflict (business_id, user_id) do update set role = excluded.role, status = 'active'`);
+    try { await fn(); } finally { sql(`delete from public.business_memberships where user_id = '${ADMIN}'`); }
+  };
+  it("is still rejected by the customer action endpoint (404) and by the RPC itself under its own real session", async () => {
+    expect(assignedTo(LEAD_A3)).toBe(A_STAFF);
+    const actsBefore = assignActs(LEAD_A3);
+    for (const role of ["BUSINESS_OWNER", "BUSINESS_MANAGER"] as const) {
+      await withAdminMembership(role, async () => {
+        expect(sql(`select role || '|' || status from public.business_memberships where user_id = '${ADMIN}' and business_id = '${BIZ_A}'`)).toBe(`${role}|active`);
+        // HTTP route: the application still classifies the user as an administrator.
+        const admin = await login("platform-admin@example.invalid");
+        expect((await assign(admin, LEAD_A3, A_OWNER)).status, role).toBe(404);
+        expect((await assign(admin, LEAD_A3, "")).status, role).toBe(404);
+        // Database boundary: a direct authenticated RPC call (anon key + the administrator's real
+        // session, exactly what a browser could do) - NOT a service-role client.
+        const sb = createClient(SUPABASE_URL, ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+        const signIn = await sb.auth.signInWithPassword({ email: "platform-admin@example.invalid", password: PASSWORD });
+        expect(signIn.error, role).toBeNull();
+        expect(signIn.data.user?.id).toBe(ADMIN);
+        try {
+          const visible = await sb.from("leads").select("id, assigned_to").eq("id", LEAD_A3).maybeSingle<{ id: string; assigned_to: string | null }>();
+          expect(visible.data?.assigned_to, role).toBe(A_STAFF); // read access is intact
+          for (const [label, assignee] of [["reassign", A_OWNER], ["unassign", null], ["same-value no-op", A_STAFF]] as const) {
+            const r = await sb.rpc("set_lead_assignee", { p_lead_id: LEAD_A3, p_assignee_id: assignee });
+            expect(r.error?.code, `${role} ${label}`).toBe("P0002");
+            expect(r.data, `${role} ${label}`).toBeNull();
+          }
+          const direct = await sb.from("leads").update({ assigned_to: A_OWNER }).eq("id", LEAD_A3).select("id");
+          expect(direct.error?.code, role).toBe("42501");
+        } finally {
+          await sb.auth.signOut({ scope: "local" }); // never revoke the cookie session under test
+        }
+        expect(assignedTo(LEAD_A3), role).toBe(A_STAFF);
+        expect(assignActs(LEAD_A3), role).toBe(actsBefore);
+        // Administrator pages stay readable and read-only while the membership exists.
+        const overview = await admin.get("/admin");
+        expect(overview.status, role).toBe(200);
+        const detail = await admin.get(`/admin/leads/${LEAD_A3}`);
+        expect(detail.status, role).toBe(200);
+        expect(detail.text, role).toContain("Assigned to Staff A (synthetic)");
+        expect(detail.text, role).not.toContain('name="assignee_id"');
+      });
+    }
+    expect(sql(`select count(*) from public.business_memberships where user_id = '${ADMIN}'`)).toBe("0");
+    expect(assignedTo(LEAD_A3)).toBe(A_STAFF);
+    expect(assignActs(LEAD_A3)).toBe(actsBefore);
+  });
+});
+
 describe("assignment visibility and filters", () => {
   it("appears on customer detail (with form for owner, read-only for staff), in the list and in admin views", async () => {
     const owner = await login("owner-a@example.invalid");
@@ -219,6 +282,49 @@ describe("assignment visibility and filters", () => {
     expect(cross.text).not.toContain("Staff A (synthetic)");
     expect(cross.text).not.toContain("Test Contact One");
     expect(cross.text).toContain("Bravo Plumbing (synthetic)");
+  });
+});
+
+describe("explicit unassignment intent (corrective hardening)", () => {
+  // Seeded lead A1 is assigned to manager A. Only an exact, single, explicitly
+  // empty assignee_id may unassign it; ambiguity changes nothing and audits nothing.
+  const ACTIONS = `/api/leads/${LEAD_A1}/actions`;
+  it("missing, whitespace-only and duplicate assignee_id fields are rejected without touching the lead", async () => {
+    const owner = await login("owner-a@example.invalid");
+    expect(assignedTo(LEAD_A1)).toBe(A_MANAGER);
+    const before = assignActs(LEAD_A1);
+    const bodies: Array<[string, string]> = [
+      ["missing field", "action=set_assignee"],
+      ["whitespace-only", "action=set_assignee&assignee_id=%20%20"],
+      ["empty then valid", `action=set_assignee&assignee_id=&assignee_id=${A_STAFF}`],
+      ["valid then empty", `action=set_assignee&assignee_id=${A_STAFF}&assignee_id=`],
+      ["valid twice", `action=set_assignee&assignee_id=${A_STAFF}&assignee_id=${A_STAFF}`],
+      ["empty twice", "action=set_assignee&assignee_id=&assignee_id="],
+    ];
+    for (const [label, body] of bodies) {
+      const r = await owner.postRaw(ACTIONS, body);
+      expect(r.status, label).toBe(303);
+      expect(r.location, label).toMatch(new RegExp(`^http://[^/]+/dashboard/leads/${LEAD_A1}\\?err=invalid_assignee$`));
+      expect(assignedTo(LEAD_A1), label).toBe(A_MANAGER);
+      expect(assignActs(LEAD_A1), label).toBe(before);
+    }
+  });
+  it("exactly one explicitly empty assignee_id unassigns once with a correct immutable audit row", async () => {
+    const owner = await login("owner-a@example.invalid");
+    const before = assignActs(LEAD_A1);
+    const r = await owner.postRaw(ACTIONS, "action=set_assignee&assignee_id=");
+    expect(r.status).toBe(303);
+    expect(r.location).toMatch(new RegExp(`^http://[^/]+/dashboard/leads/${LEAD_A1}\\?ok=set_assignee$`));
+    expect(assignedTo(LEAD_A1)).toBe("");
+    expect(assignActs(LEAD_A1)).toBe(before + 1);
+    const row = sql(`select actor_id::text || '|' || actor_display_name || '|' || old_value || '|' || coalesce(new_value, '-') || '|' || old_display_value || '|' || coalesce(new_display_value, '-')
+                     from public.lead_activities where lead_id = '${LEAD_A1}' and activity_type = 'assignment_changed' order by created_at desc limit 1`);
+    expect(row).toBe(`${A_OWNER}|Owner A (synthetic)|${A_MANAGER}|-|Manager A (synthetic)|-`);
+    const immutable = spawnSync("docker", ["exec", CONTAINER, "psql", "-U", "postgres", "-d", "postgres", "-Atq", "-c",
+      `update public.lead_activities set new_value = '${A_STAFF}' where lead_id = '${LEAD_A1}' and activity_type = 'assignment_changed'`], { encoding: "utf8" });
+    expect(immutable.status).not.toBe(0);
+    expect(immutable.stderr).toContain("append-only");
+    expect(assignActs(LEAD_A1)).toBe(before + 1);
   });
 });
 
