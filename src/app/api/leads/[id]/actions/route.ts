@@ -1,22 +1,24 @@
 import { NextResponse } from "next/server";
+import { canAssign } from "@/lib/access";
 import { ACTION_FORM_MAX_BYTES, readBoundedForm } from "@/lib/server/forms";
 import { logEvent, newRequestId } from "@/lib/server/http";
 import { isSameSiteRequest } from "@/lib/server/same-site";
 import { getViewer } from "@/lib/server/viewer";
 import { parseLeadAction, type ActionError } from "@/lib/lead-actions";
 
-// Customer lead actions (status, follow-up, notes). Runs under the signed-in
-// user's ordinary session (anon key + RLS) — never the service-role client.
-// Authority: the lead must be visible through RLS and belong to one of the
-// viewer's active businesses; nothing in the form can name a tenant or actor.
-// Post/Redirect/Get: every outcome redirects to the lead page with an
-// allow-listed result code; no submitted value ever appears in a URL or log.
+// Customer lead actions (status, follow-up, notes, assignment). Runs under the
+// signed-in user's ordinary session (anon key + RLS) — never the service-role
+// client. Authority: the lead must be visible through RLS and belong to one of
+// the viewer's active businesses; the viewer's role for THAT business comes from
+// their own RLS-visible membership row; nothing in the form can name a tenant,
+// actor or role. Post/Redirect/Get with allow-listed result codes only.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+type ErrCode = ActionError | "not_found" | "failed" | "not_allowed" | "assignment_rejected";
 
-function back(request: Request, id: string, result: { ok: string } | { err: ActionError | "not_found" | "failed" }): NextResponse {
+function back(request: Request, id: string, result: { ok: string } | { err: ErrCode }): NextResponse {
   const url = new URL(`/dashboard/leads/${id}`, request.url);
   if ("ok" in result) url.searchParams.set("ok", result.ok);
   else url.searchParams.set("err", result.err);
@@ -75,6 +77,23 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
     }
     logEvent({ requestId, event: "lead_action", action: "add_note", status: 303, category: "ok", replayed: data.replayed });
     return back(request, id, { ok: "add_note" });
+  }
+
+  if (action.kind === "set_assignee") {
+    // Role for THIS business from the viewer's own RLS-visible membership (the RPC re-checks independently).
+    if (!canAssign(viewer.access, business.id)) {
+      logEvent({ requestId, event: "lead_action", action: "set_assignee", status: 303, category: "not_allowed" });
+      return back(request, id, { err: "not_allowed" });
+    }
+    const { data, error } = await supabase.rpc("set_lead_assignee", { p_lead_id: id, p_assignee_id: action.assigneeId }).single<{ lead_id: string; assigned_to: string | null; changed: boolean }>();
+    if (error || !data) {
+      // unknown/foreign lead, invalid/inactive/cross-business assignee, revoked caller: one opaque outcome
+      const category = error?.code === "P0002" ? "assignment_rejected" : "rpc_error";
+      logEvent({ requestId, event: "lead_action", action: "set_assignee", status: 303, category, sqlstate: error?.code ?? null });
+      return back(request, id, { err: category === "assignment_rejected" ? "assignment_rejected" : "failed" });
+    }
+    logEvent({ requestId, event: "lead_action", action: "set_assignee", status: 303, category: "ok", changed: data.changed });
+    return back(request, id, { ok: "set_assignee" });
   }
 
   const patch: { status?: string; follow_up_at?: string | null } =

@@ -1,9 +1,10 @@
 import { notFound, redirect } from "next/navigation";
-import { ActivityTimeline, type ActivityRow } from "@/components/activity-timeline";
+import { ACTIVITY_COLUMNS, ActivityTimeline, type ActivityRow } from "@/components/activity-timeline";
 import { AppShell } from "@/components/app-shell";
 import { BusinessStatusBadge } from "@/components/badges";
 import { LEAD_DETAIL_COLUMNS, LeadHeader, LeadInfoSections, type LeadDetail } from "@/components/lead-detail-sections";
 import type { BusinessRow } from "@/lib/access";
+import { FORMER_MEMBER } from "@/lib/activity-text";
 import { getViewer } from "@/lib/server/viewer";
 
 export const dynamic = "force-dynamic";
@@ -20,14 +21,19 @@ export default async function AdminLeadDetailPage({ params }: { params: Promise<
   const { id } = await params;
   if (!UUID.test(id)) notFound();
   const { supabase } = viewer;
-  const { data: lead } = await supabase.from("leads").select(LEAD_DETAIL_COLUMNS).eq("id", id).maybeSingle<LeadDetail>();
+  const { data: lead } = await supabase.from("leads").select(`${LEAD_DETAIL_COLUMNS}, assigned_to`).eq("id", id).maybeSingle<LeadDetail & { assigned_to: string | null }>();
   if (!lead) notFound();
   const { data: business } = await supabase.from("businesses").select("id, name, slug, timezone, status").eq("id", lead.business_id).maybeSingle<BusinessRow>();
   if (!business) notFound();
   const tz = business.timezone;
+  let assigneeName: string | null = null;
+  if (lead.assigned_to) {
+    const { data: p } = await supabase.from("profiles").select("display_name").eq("id", lead.assigned_to).maybeSingle<{ display_name: string }>();
+    assigneeName = p?.display_name?.trim() || FORMER_MEMBER;
+  }
   const { data: activities } = await supabase
     .from("lead_activities")
-    .select("id, activity_type, old_value, new_value, note, actor_display_name, created_at")
+    .select(ACTIVITY_COLUMNS)
     .eq("lead_id", lead.id)
     .order("created_at", { ascending: false })
     .limit(500)
@@ -40,6 +46,7 @@ export default async function AdminLeadDetailPage({ params }: { params: Promise<
           <div className="eyebrow">{business.name} · <BusinessStatusBadge status={business.status} /></div>
           <LeadHeader lead={lead} tz={tz} />
           <p className="muted">Read-only inspection. Times shown in {tz}.</p>
+          <p className="assignee-current">Assigned to: <strong>{assigneeName ?? "Unassigned"}</strong></p>
         </div>
         <a className="btn btn--link" href="/admin">← Back to overview</a>
       </div>

@@ -2,7 +2,7 @@
 import { LEAD_STATUSES, allowlisted } from "./access";
 import { localToUtc } from "./timezone";
 
-export const ACTIONS = ["set_status", "set_follow_up", "clear_follow_up", "add_note"] as const;
+export const ACTIONS = ["set_status", "set_follow_up", "clear_follow_up", "add_note", "set_assignee"] as const;
 export type ActionName = (typeof ACTIONS)[number];
 
 /** Fields allowed per action. Anything else is rejected, never ignored. */
@@ -11,20 +11,25 @@ export const ACTION_FIELDS: Record<ActionName, readonly string[]> = {
   set_follow_up: ["action", "date", "time"],
   clear_follow_up: ["action"],
   add_note: ["action", "note", "request_id"],
+  set_assignee: ["action", "assignee_id"],
 };
 
 export const NOTE_MAX = 2000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const ANY_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export type ParsedAction =
   | { kind: "set_status"; status: (typeof LEAD_STATUSES)[number] }
   | { kind: "set_follow_up"; at: Date }
   | { kind: "clear_follow_up" }
-  | { kind: "add_note"; note: string; requestId: string };
+  | { kind: "add_note"; note: string; requestId: string }
+  | { kind: "set_assignee"; assigneeId: string | null };
 
-export type ActionError = "unsupported_action" | "unexpected_field" | "invalid_status" | "invalid_follow_up" | "nonexistent_time" | "invalid_note" | "invalid_request_id";
+export type ActionError =
+  | "unsupported_action" | "unexpected_field" | "invalid_status" | "invalid_follow_up" | "nonexistent_time"
+  | "invalid_note" | "invalid_request_id" | "invalid_assignee";
 
-export const ERROR_MESSAGES: Record<ActionError | "not_found" | "failed", string> = {
+export const ERROR_MESSAGES: Record<ActionError | "not_found" | "failed" | "not_allowed" | "assignment_rejected", string> = {
   unsupported_action: "That action is not supported.",
   unexpected_field: "The request contained unexpected data.",
   invalid_status: "Choose a valid status.",
@@ -32,6 +37,9 @@ export const ERROR_MESSAGES: Record<ActionError | "not_found" | "failed", string
   nonexistent_time: "That time does not exist on that date in your business timezone (daylight-saving change). Pick another time.",
   invalid_note: "Notes must be between 1 and 2,000 characters.",
   invalid_request_id: "Please reload the page and try again.",
+  invalid_assignee: "Choose a team member from the list.",
+  not_allowed: "Only business owners and managers can change assignments.",
+  assignment_rejected: "The assignment could not be applied. Choose an active team member and try again.",
   not_found: "That lead is not available.",
   failed: "The change could not be saved. Please try again.",
 };
@@ -41,6 +49,7 @@ export const OK_MESSAGES: Record<ActionName, string> = {
   set_follow_up: "Follow-up scheduled.",
   clear_follow_up: "Follow-up cleared.",
   add_note: "Note added.",
+  set_assignee: "Assignment updated.",
 };
 
 export function parseLeadAction(fields: URLSearchParams, businessTimeZone: string): { ok: true; action: ParsedAction } | { ok: false; error: ActionError } {
@@ -67,6 +76,12 @@ export function parseLeadAction(fields: URLSearchParams, businessTimeZone: strin
       if (!UUID.test(requestId)) return { ok: false, error: "invalid_request_id" };
       if (note.length < 1 || note.length > NOTE_MAX) return { ok: false, error: "invalid_note" };
       return { ok: true, action: { kind: "add_note", note, requestId } };
+    }
+    case "set_assignee": {
+      const raw = (fields.get("assignee_id") ?? "").trim();
+      if (raw === "") return { ok: true, action: { kind: "set_assignee", assigneeId: null } };
+      if (!ANY_UUID.test(raw)) return { ok: false, error: "invalid_assignee" };
+      return { ok: true, action: { kind: "set_assignee", assigneeId: raw.toLowerCase() } };
     }
   }
 }

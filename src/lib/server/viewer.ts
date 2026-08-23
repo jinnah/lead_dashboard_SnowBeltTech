@@ -1,5 +1,5 @@
 import "server-only";
-import { resolveAccess, type Access, type BusinessRow, type ProfileRow } from "@/lib/access";
+import { resolveAccess, type Access, type BusinessRow, type MemberOption, type MembershipRow, type ProfileRow } from "@/lib/access";
 import { createServerSupabase } from "./supabase-server";
 
 export interface Viewer {
@@ -15,6 +15,7 @@ export interface Viewer {
  *  1. auth.getUser() validates the session with the Auth server (not a local JWT read).
  *  2. The user's own profiles row (RLS self policy) supplies is_active / platform_role.
  *  3. Visible businesses come from RLS (active membership + active business, or platform admin).
+ *  4. The user's own membership rows supply the per-business role (owner/manager/staff).
  * Deactivated profile, inactive membership, suspended/archived business => no access, immediately.
  */
 export async function getViewer(): Promise<Viewer | null> {
@@ -37,7 +38,43 @@ export async function getViewer(): Promise<Viewer | null> {
     .order("name", { ascending: true })
     .returns<BusinessRow[]>();
 
-  const access = resolveAccess(profile ?? null, businesses ?? []);
+  const { data: memberships } = await supabase
+    .from("business_memberships")
+    .select("business_id, role, status")
+    .eq("user_id", user.id)
+    .returns<MembershipRow[]>();
+
+  const access = resolveAccess(profile ?? null, businesses ?? [], memberships ?? []);
   if (!profile) return null;
   return { userId: user.id, email: user.email ?? null, profile, access, supabase };
+}
+
+interface MembershipWithProfile {
+  user_id: string;
+  role: string;
+  status: string;
+  profiles: { display_name: string; is_active: boolean } | null;
+}
+
+/**
+ * Members of one business as visible through the viewer's RLS session.
+ * `active` = assignable (active membership + active profile); `names` maps every
+ * visible member id (incl. inactive) to a display name for rendering assignees.
+ */
+export async function loadMembers(viewer: Viewer, businessId: string): Promise<{ active: MemberOption[]; names: Map<string, string> }> {
+  const { data } = await viewer.supabase
+    .from("business_memberships")
+    .select("user_id, role, status, profiles(display_name, is_active)")
+    .eq("business_id", businessId)
+    .returns<MembershipWithProfile[]>();
+  const rows = data ?? [];
+  const names = new Map<string, string>();
+  const active: MemberOption[] = [];
+  for (const m of rows) {
+    const name = m.profiles?.display_name?.trim() || "Team member";
+    names.set(m.user_id, name);
+    if (m.status === "active" && m.profiles?.is_active === true) active.push({ user_id: m.user_id, display_name: name, role: m.role });
+  }
+  active.sort((a, b) => a.display_name.localeCompare(b.display_name));
+  return { active, names };
 }

@@ -159,3 +159,5 @@ dl.kv dd { margin: 0; word-break: break-word; }
 .timeline__who { font-weight: 600; color: var(--slate-700); }
 .timeline__what { font-size: 0.95rem; }
 .timeline__note { margin: 0.35rem 0 0; background: var(--slate-100); border-radius: 8px; padding: 0.6rem 0.8rem; font-size: 0.95rem; }
+.assignee-current { font-weight: 600; margin: 0 0 0.5rem; }
+.timeline__item--assignment_changed::before { background: var(--navy-700); }

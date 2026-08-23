@@ -3,6 +3,7 @@ import { AppShell } from "@/components/app-shell";
 import { BusinessStatusBadge } from "@/components/badges";
 import { LeadList, type LeadListRow } from "@/components/lead-list";
 import type { BusinessRow } from "@/lib/access";
+import { FORMER_MEMBER } from "@/lib/activity-text";
 import { getViewer } from "@/lib/server/viewer";
 
 export const dynamic = "force-dynamic";
@@ -42,12 +43,17 @@ export default async function AdminPage() {
 
   const { data: recent } = await supabase
     .from("leads")
-    .select("id, business_id, lead_number, contact_name, phone_e164, email, requested_service, source, status, urgency, review_recommended, created_at")
+    .select("id, business_id, lead_number, contact_name, phone_e164, email, requested_service, source, status, urgency, review_recommended, created_at, assigned_to")
     .is("archived_at", null)
     .order("created_at", { ascending: false })
     .limit(50)
     .returns<AdminLeadRow[]>();
   const leads: LeadListRow[] = (recent ?? []).map((l) => ({ ...l, business_name: nameById.get(l.business_id) ?? "—" }));
+  const assigneeIds = [...new Set(leads.map((l) => l.assigned_to).filter((x): x is string => Boolean(x)))];
+  const { data: assignees } = assigneeIds.length
+    ? await supabase.from("profiles").select("id, display_name").in("id", assigneeIds).returns<{ id: string; display_name: string }[]>()
+    : { data: [] as { id: string; display_name: string }[] };
+  const assigneeById = new Map((assignees ?? []).map((p) => [p.id, p.display_name?.trim() || FORMER_MEMBER]));
   const totalLeads = counts.reduce((s, c) => s + c.total, 0);
 
   return (
@@ -88,7 +94,7 @@ export default async function AdminPage() {
       </section>
       <section aria-labelledby="recent-h">
         <h2 id="recent-h">Recent leads across customers</h2>
-        <LeadList leads={leads} timeZoneFor={(l) => tzById.get((l as AdminLeadRow).business_id ?? "") ?? "UTC"} linkBase="/admin/leads" showBusiness emptyText="No leads yet." />
+        <LeadList leads={leads} timeZoneFor={(l) => tzById.get((l as AdminLeadRow).business_id ?? "") ?? "UTC"} assigneeName={(id) => (id ? assigneeById.get(id) ?? FORMER_MEMBER : "Unassigned")} linkBase="/admin/leads" showBusiness emptyText="No leads yet." />
       </section>
     </AppShell>
   );

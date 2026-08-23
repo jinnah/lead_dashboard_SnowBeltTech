@@ -106,7 +106,7 @@ select is((select count(*) from pg_proc p join pg_namespace n on n.oid = p.prona
              and not exists (select 1 from unnest(p.proconfig) c where c in ('search_path=', 'search_path=""'))), 0::bigint,
   'every private function pins an empty search_path');
 select set_eq('select p.proname::text from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = $$public$$',
-  array['ingest_lead_event', 'add_lead_note'], 'the exposed public schema holds exactly the two reviewed RPCs');
+  array['ingest_lead_event', 'add_lead_note', 'set_lead_assignee'], 'the exposed public schema holds exactly the three reviewed RPCs');
 
 -- ---- defensive triggers present ----------------------------------------------
 select has_trigger('public', 'leads',                'trg_z_leads_protect_identity',                'leads identity trigger');

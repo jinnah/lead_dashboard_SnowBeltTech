@@ -1,13 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { notFound, redirect } from "next/navigation";
-import { ActivityTimeline, type ActivityRow } from "@/components/activity-timeline";
+import { ACTIVITY_COLUMNS, ActivityTimeline, type ActivityRow } from "@/components/activity-timeline";
 import { AppShell } from "@/components/app-shell";
 import { LEAD_DETAIL_COLUMNS, LeadHeader, LeadInfoSections, type LeadDetail } from "@/components/lead-detail-sections";
 import { StatusForm } from "@/components/status-form";
-import { LEAD_STATUSES } from "@/lib/access";
+import { LEAD_STATUSES, canAssign } from "@/lib/access";
+import { FORMER_MEMBER } from "@/lib/activity-text";
 import { STATUS_LABELS, formatDateTime } from "@/lib/format";
 import { ACTIONS, ERROR_MESSAGES, OK_MESSAGES, type ActionName } from "@/lib/lead-actions";
-import { getViewer } from "@/lib/server/viewer";
+import { getViewer, loadMembers } from "@/lib/server/viewer";
 import { utcToLocalParts } from "@/lib/timezone";
 
 export const dynamic = "force-dynamic";
@@ -24,15 +25,18 @@ export default async function LeadDetailPage({ params, searchParams }: { params:
   if (!UUID.test(id)) notFound();
   const { supabase } = viewer;
   // RLS decides visibility; anything not visible (other tenant, nonexistent) is an identical 404.
-  const { data: lead } = await supabase.from("leads").select(LEAD_DETAIL_COLUMNS).eq("id", id).is("archived_at", null).maybeSingle<LeadDetail>();
+  const { data: lead } = await supabase.from("leads").select(`${LEAD_DETAIL_COLUMNS}, assigned_to`).eq("id", id).is("archived_at", null).maybeSingle<LeadDetail & { assigned_to: string | null }>();
   if (!lead) notFound();
   const business = viewer.access.businesses.find((b) => b.id === lead.business_id);
   if (!business) notFound();
   const tz = business.timezone;
+  const members = await loadMembers(viewer, business.id);
+  const mayAssign = canAssign(viewer.access, business.id);
+  const assigneeName = lead.assigned_to ? members.names.get(lead.assigned_to) ?? FORMER_MEMBER : null;
 
   const { data: activities } = await supabase
     .from("lead_activities")
-    .select("id, activity_type, old_value, new_value, note, actor_display_name, created_at")
+    .select(ACTIVITY_COLUMNS)
     .eq("lead_id", lead.id)
     .order("created_at", { ascending: false })
     .limit(200)
@@ -83,6 +87,25 @@ export default async function LeadDetailPage({ params, searchParams }: { params:
               <button type="submit" className="btn btn--secondary">Clear follow-up</button>
             </form>
           ) : null}
+          <div className="inline-form" data-testid="assignment">
+            <p className="field__label">Assigned to</p>
+            <p className="assignee-current">{assigneeName ?? <span className="muted">Unassigned</span>}</p>
+            {mayAssign ? (
+              <form method="post" action={actionUrl}>
+                <input type="hidden" name="action" value="set_assignee" />
+                <label className="field">
+                  <span className="field__label">Change assignment</span>
+                  <select className="field__input" name="assignee_id" defaultValue={lead.assigned_to ?? ""}>
+                    <option value="">Unassigned</option>
+                    {members.active.map((m) => <option key={m.user_id} value={m.user_id}>{m.display_name}</option>)}
+                  </select>
+                </label>
+                <button type="submit" className="btn btn--primary">Update assignment</button>
+              </form>
+            ) : (
+              <p className="muted">Owners and managers manage assignments.</p>
+            )}
+          </div>
         </div>
       </section>
 
