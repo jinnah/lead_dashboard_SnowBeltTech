@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { BusinessStatusBadge } from "@/components/badges";
@@ -64,6 +65,7 @@ export default async function AdminPage() {
           <h1>Platform overview</h1>
           <p className="muted">All customer businesses and their leads, read through your administrator session.</p>
         </div>
+        <Link className="btn btn--primary" href="/admin/businesses/new">Create business</Link>
       </div>
       <section className="stats" aria-label="Platform summary">
         <div className="stat"><div className="stat__label">Businesses</div><div className="stat__value">{all.length}</div></div>
@@ -80,7 +82,7 @@ export default async function AdminPage() {
               {all.length === 0 ? <tr><td colSpan={6} className="empty">No businesses.</td></tr> : null}
               {all.map((b) => (
                 <tr key={b.id}>
-                  <td><strong>{b.name}</strong></td>
+                  <td><a href={`/admin/businesses/${b.id}`}><strong>{b.name}</strong></a></td>
                   <td className="muted">{b.slug}</td>
                   <td><BusinessStatusBadge status={b.status} /></td>
                   <td>{b.timezone}</td>

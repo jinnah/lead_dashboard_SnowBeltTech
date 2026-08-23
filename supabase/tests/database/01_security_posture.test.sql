@@ -38,8 +38,8 @@ select is((select count(*) from pg_policies where schemaname = 'public' and 'ano
   'no policy grants anything to anon');
 select is((select count(*) from pg_policies where schemaname = 'public' and roles = '{public}'), 0::bigint,
   'no policy is addressed to PUBLIC');
-select is((select count(*) from pg_policies where schemaname = 'public'), 9::bigint,
-  'exactly the 9 expected policies exist (7 Batch 1 + ingestion_events + lead_activities select)');
+select is((select count(*) from pg_policies where schemaname = 'public'), 10::bigint,
+  'exactly the 10 expected policies exist (7 Batch 1 + ingestion_events + lead_activities + platform_admin_events select)');
 
 -- ---- anon has no privileges at all ----------------------------------------
 select is((select bool_or(has_table_privilege('anon', t, p))
@@ -106,7 +106,8 @@ select is((select count(*) from pg_proc p join pg_namespace n on n.oid = p.prona
              and not exists (select 1 from unnest(p.proconfig) c where c in ('search_path=', 'search_path=""'))), 0::bigint,
   'every private function pins an empty search_path');
 select set_eq('select p.proname::text from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = $$public$$',
-  array['ingest_lead_event', 'add_lead_note', 'set_lead_assignee'], 'the exposed public schema holds exactly the three reviewed RPCs');
+  array['ingest_lead_event', 'add_lead_note', 'set_lead_assignee', 'admin_create_business', 'admin_set_business_status', 'admin_create_integration_source', 'admin_set_integration_source_status'],
+  'the exposed public schema holds exactly the seven reviewed RPCs');
 
 -- ---- defensive triggers present ----------------------------------------------
 select has_trigger('public', 'leads',                'trg_z_leads_protect_identity',                'leads identity trigger');
