@@ -107,8 +107,8 @@ select is((select count(*) from pg_proc p join pg_namespace n on n.oid = p.prona
   'every private function pins an empty search_path');
 select set_eq('select p.proname::text from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = $$public$$',
   array['ingest_lead_event', 'add_lead_note', 'set_lead_assignee', 'admin_create_business', 'admin_set_business_status', 'admin_create_integration_source', 'admin_set_integration_source_status',
-  'admin_prepare_customer_invitation', 'admin_mark_customer_invitation_sent', 'admin_mark_customer_invitation_failed', 'admin_revoke_customer_invitation', 'accept_customer_invitation', 'admin_set_business_member_role', 'admin_set_business_member_status'],
-  'the exposed public schema holds exactly the fourteen reviewed RPCs');
+  'admin_prepare_customer_invitation', 'admin_mark_customer_invitation_sent', 'admin_mark_customer_invitation_failed', 'admin_revoke_customer_invitation', 'accept_customer_invitation', 'admin_set_business_member_role', 'admin_set_business_member_status', 'search_leads'],
+  'the exposed public schema holds exactly the fifteen reviewed RPCs');
 
 -- ---- defensive triggers present ----------------------------------------------
 select has_trigger('public', 'leads',                'trg_z_leads_protect_identity',                'leads identity trigger');

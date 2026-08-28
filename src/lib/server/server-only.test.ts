@@ -73,6 +73,27 @@ describe("privileged module isolation", () => {
       }
     }
   });
+  it("customer search/export surfaces never touch the service-role client, Auth Admin or the invitation coordinator", () => {
+    const surfaces = [
+      "src/app/dashboard/page.tsx",
+      "src/app/api/leads/export/route.ts",
+      "src/lib/server/lead-search.ts",
+      "src/lib/lead-query.ts",
+      "src/lib/csv.ts",
+    ];
+    for (const rel of surfaces) {
+      const text = readFileSync(path.join(root, rel), "utf8");
+      for (const forbidden of ["supabase-admin", "supabase-auth-admin", "server/invitations", "SUPABASE_SERVICE_ROLE_KEY", "N8N_INGEST_TOKEN"]) {
+        expect(text.includes(forbidden), `${rel} references ${forbidden}`).toBe(false);
+      }
+    }
+    // the export/search path may never build PostgREST .or() grammar from input
+    for (const rel of ["src/app/dashboard/page.tsx", "src/app/api/leads/export/route.ts", "src/lib/server/lead-search.ts"]) {
+      const text = readFileSync(path.join(root, rel), "utf8");
+      expect(text, rel).not.toMatch(/\.or\(/);
+      expect(text, rel).not.toMatch(/\.ilike\(/);
+    }
+  });
   it("recovery surfaces never touch the service-role client, Auth Admin or the invitation coordinator", () => {
     const recoverySurfaces = [
       "src/app/forgot-password/page.tsx",

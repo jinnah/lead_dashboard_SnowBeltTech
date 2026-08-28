@@ -25,7 +25,7 @@ select is((select bool_and((select pg_get_userbyid(proowner) from pg_proc where 
 select is((select bool_and((select exists (select 1 from unnest(proconfig) c where c in ('search_path=', 'search_path=""')) from pg_proc where oid = sig::regprocedure)) from hard_fns), true, 'all three pin an empty search_path');
 select is((select bool_or(has_function_privilege('anon', sig, 'EXECUTE') or has_function_privilege('public', sig, 'EXECUTE')) from hard_fns), false, 'anon and PUBLIC cannot execute');
 select is((select bool_and(has_function_privilege('authenticated', sig, 'EXECUTE')) from hard_fns), true, 'authenticated can execute');
-select is((select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public'), 14::bigint, 'public RPC inventory unchanged (14)');
+select is((select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public'), 15::bigint, 'public RPC inventory unchanged by this file (15)');
 select is((select count(*) from pg_policies where schemaname = 'public'), 12::bigint, 'policy inventory unchanged (12)');
 select is(pg_get_function_result('public.admin_set_business_member_role(uuid,uuid,text)'::regprocedure), 'TABLE(user_id uuid, role text, changed boolean)', 'member role return contract unchanged');
 select is(pg_get_function_result('public.admin_set_business_member_status(uuid,uuid,text)'::regprocedure), 'TABLE(user_id uuid, status text, changed boolean)', 'member status return contract unchanged');

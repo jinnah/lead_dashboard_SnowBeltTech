@@ -57,6 +57,15 @@ export function canAssign(access: Access, businessId: string): boolean {
   return access.kind === "customer" && (role === "BUSINESS_OWNER" || role === "BUSINESS_MANAGER");
 }
 
+/**
+ * Bulk CSV export capability: only an active BUSINESS_OWNER or BUSINESS_MANAGER
+ * membership in that business may export. Staff keep full lead visibility and
+ * search but no bulk export; platform administrators have none in this batch.
+ */
+export function canExportLeads(access: Access, businessId: string): boolean {
+  return canAssign(access, businessId);
+}
+
 /** Chooses the business to display: a requested slug is honoured only if it is in the authorized list. */
 export function selectBusiness(businesses: BusinessRow[], requestedSlug: string | null | undefined): BusinessRow | null {
   if (businesses.length === 0) return null;
