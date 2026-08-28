@@ -252,6 +252,12 @@ otp_expiry = 3600
 subject = "You are invited to the SnowBeltTech Lead Portal"
 content_path = "./supabase/templates/invite.html"
 
+# Recovery email uses the same server-verifiable token-hash shape (SSR
+# /auth/confirm with type=recovery). Local mail catcher only — no hosted SMTP.
+[auth.email.template.recovery]
+subject = "Reset your SnowBeltTech Lead Portal password"
+content_path = "./supabase/templates/recovery.html"
+
 # Uncomment to customize notification email template
 # [auth.email.notification.password_changed]
 # enabled = true

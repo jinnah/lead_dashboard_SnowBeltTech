@@ -1,16 +1,24 @@
 import { NextResponse } from "next/server";
-import { parseInviteCallback } from "@/lib/account-setup";
+import { parseAuthConfirmCallback } from "@/lib/auth-callback";
 import { logEvent, newRequestId } from "@/lib/server/http";
 import { createServerSupabase } from "@/lib/server/supabase-server";
 
-// Invitation confirmation callback (from the local invite email template):
+// Email confirmation callback (from the local invite/recovery templates):
 //   GET /auth/confirm?token_hash=<hash>&type=invite
-// Verifies the token with Supabase Auth under the ORDINARY public client (the
-// session lands in httpOnly cookies), then accepts the invitation bound to the
-// now-authenticated user inside the database, and finally redirects to the
-// initial-password page. Only type=invite is supported; there is no
-// browser-controlled redirect target; the token is never logged, stored or
+//   GET /auth/confirm?token_hash=<hash>&type=recovery
+// The token is verified with Supabase Auth under the ORDINARY public client
+// (the session lands in httpOnly cookies) and STRICTLY as the type named in
+// the allow-listed `type` parameter — an invite token can never enter the
+// recovery path and a recovery token can never enter invitation acceptance,
+// because GoTrue's verification is type-specific. Only these two types are
+// supported; duplicated or unexpected query parameters are rejected; there is
+// no browser-controlled redirect target; the token is never logged, stored or
 // reflected; the service-role key is never involved.
+//
+// type=invite additionally accepts the invitation inside the database
+// (accept_customer_invitation, bound to the now-authenticated user).
+// type=recovery touches NO application table, RPC or ledger: a valid token
+// only yields the ordinary session that /account/reset-password requires.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -23,14 +31,25 @@ function redirectTo(request: Request, path: string): NextResponse {
 export async function GET(request: Request): Promise<NextResponse> {
   const requestId = newRequestId();
   const url = new URL(request.url);
-  const parsed = parseInviteCallback(url.searchParams.get("token_hash"), url.searchParams.get("type"));
+  const parsed = parseAuthConfirmCallback(url.searchParams);
   if (!parsed.ok) {
-    logEvent({ requestId, event: "invite_confirm", status: 303, category: "bad_callback" });
-    return redirectTo(request, "/login?error=invite");
+    logEvent({ requestId, event: parsed.errorTarget === "recovery" ? "recovery_confirm" : "invite_confirm", status: 303, category: "bad_callback" });
+    return redirectTo(request, `/login?error=${parsed.errorTarget}`);
   }
 
   const supabase = await createServerSupabase();
-  const { error } = await supabase.auth.verifyOtp({ type: "invite", token_hash: parsed.tokenHash });
+  const { error } = await supabase.auth.verifyOtp({ type: parsed.type, token_hash: parsed.tokenHash });
+
+  if (parsed.type === "recovery") {
+    if (error) {
+      // Opaque: expired, replayed, forged and wrong-type tokens all end here.
+      logEvent({ requestId, event: "recovery_confirm", status: 303, category: "verify_rejected" });
+      return redirectTo(request, "/login?error=recovery");
+    }
+    logEvent({ requestId, event: "recovery_confirm", status: 303, category: "ok" });
+    return redirectTo(request, "/account/reset-password");
+  }
+
   if (error) {
     logEvent({ requestId, event: "invite_confirm", status: 303, category: "verify_rejected" });
     return redirectTo(request, "/login?error=invite");

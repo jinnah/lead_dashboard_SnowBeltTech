@@ -438,7 +438,8 @@ describe("revocation, failure compensation and hardening", () => {
     expect((await anon.post(`/api/admin/businesses/${id}/actions`, { action: "invite_member", email: "a@b.invalid", display_name: "X", role: "BUSINESS_STAFF" })).status).toBe(401);
     expect(Number(sql(`select count(*) from public.customer_invitations`))).toBe(invitationsBefore);
     // /auth/confirm rejects wrong types, malformed and forged tokens without side effects
-    for (const q of ["?token_hash=aaaaaaaaaaaaaaaaaaaaaaaa&type=recovery", "?token_hash=short&type=invite", "?type=invite", "?token_hash=aaaaaaaaaaaaaaaaaaaaaaaa&type=invite&next=https://evil.invalid"]) {
+    // (type=recovery probes now land on the generic recovery error and are covered by the recovery suite)
+    for (const q of ["?token_hash=aaaaaaaaaaaaaaaaaaaaaaaa&type=email", "?token_hash=short&type=invite", "?type=invite", "?token_hash=aaaaaaaaaaaaaaaaaaaaaaaa&type=invite&next=https://evil.invalid"]) {
       const r = await fetch(`${BASE}/auth/confirm${q}`, { redirect: "manual" });
       expect([303]).toContain(r.status);
       expect(r.headers.get("location"), q).toMatch(/\/login\?error=invite$/);

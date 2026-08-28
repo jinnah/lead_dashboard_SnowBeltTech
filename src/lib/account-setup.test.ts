@@ -1,23 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { ACCOUNT_SETUP_MESSAGES, parseAccountSetup, parseInviteCallback, PASSWORD_MAX, PASSWORD_MIN } from "./account-setup";
+import { ACCOUNT_SETUP_MESSAGES, parseAccountSetup, PASSWORD_MAX, PASSWORD_MIN } from "./account-setup";
 
+// The /auth/confirm callback query parser lives in src/lib/auth-callback.ts
+// (see auth-callback.test.ts); this file covers the shared password parser
+// used by both /account/setup and /account/reset-password.
 const p = (s: string) => parseAccountSetup(new URLSearchParams(s));
 const GOOD = "correct-horse-battery";
-
-describe("invitation callback validation", () => {
-  it("accepts only type=invite with a bounded URL-safe token hash", () => {
-    expect(parseInviteCallback("a".repeat(24), "invite")).toEqual({ ok: true, tokenHash: "a".repeat(24) });
-    expect(parseInviteCallback("pkce_0123456789abcdef-_A", "invite")).toMatchObject({ ok: true });
-  });
-  it("rejects every other type, missing values and malformed or oversized tokens", () => {
-    for (const type of ["recovery", "email", "magiclink", "signup", "email_change", "", null, "INVITE"]) {
-      expect(parseInviteCallback("a".repeat(24), type), String(type)).toEqual({ ok: false });
-    }
-    for (const token of [null, "", "short", "a".repeat(513), "bad token", "tok<script>", "tok%2Fslash", "tok/slash"]) {
-      expect(parseInviteCallback(token, "invite"), String(token)).toEqual({ ok: false });
-    }
-  });
-});
 
 describe("initial password parsing", () => {
   it("accepts exactly one matching pair within bounds", () => {

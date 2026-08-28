@@ -73,6 +73,28 @@ describe("privileged module isolation", () => {
       }
     }
   });
+  it("recovery surfaces never touch the service-role client, Auth Admin or the invitation coordinator", () => {
+    const recoverySurfaces = [
+      "src/app/forgot-password/page.tsx",
+      "src/app/account/reset-password/page.tsx",
+      "src/app/api/auth/password-reset/request/route.ts",
+      "src/app/api/account/reset-password/route.ts",
+      "src/app/auth/confirm/route.ts",
+      "src/lib/password-reset.ts",
+      "src/lib/auth-callback.ts",
+    ];
+    for (const rel of recoverySurfaces) {
+      const text = readFileSync(path.join(root, rel), "utf8");
+      for (const forbidden of ["supabase-admin", "supabase-auth-admin", "server/invitations", "SUPABASE_SERVICE_ROLE_KEY", "N8N_INGEST_TOKEN"]) {
+        expect(text.includes(forbidden), `${rel} references ${forbidden}`).toBe(false);
+      }
+    }
+    // and none of them ever reads a request-controlled redirect target
+    for (const rel of recoverySurfaces) {
+      const text = readFileSync(path.join(root, rel), "utf8");
+      expect(text, rel).not.toMatch(/\.get(?:All)?\(\s*["'](?:next|redirect_to|redirect|callback|return_url|origin)["']\s*\)/);
+    }
+  });
   it(".env.example never places a secret under NEXT_PUBLIC_ and holds placeholders only", () => {
     const example = readFileSync(path.join(root, ".env.example"), "utf8");
     for (const line of example.split(/\r?\n/).filter((l) => l.startsWith("NEXT_PUBLIC_"))) {

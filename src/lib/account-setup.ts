@@ -1,22 +1,10 @@
-// Pure parsing for invitation confirmation and initial account setup.
-// No I/O; passwords never leave the function results and are never logged.
+// Pure parsing for initial account setup (and password reset — the same
+// password policy applies to both, on purpose). No I/O; passwords never leave
+// the function results and are never logged. The /auth/confirm callback query
+// itself is parsed by src/lib/auth-callback.ts.
 
 export const PASSWORD_MIN = 12;   // matches supabase/config.toml minimum_password_length
 export const PASSWORD_MAX = 128;
-
-const TOKEN_HASH_RE = /^[A-Za-z0-9_-]{16,512}$/;
-
-/**
- * Validates the /auth/confirm query. Only `type=invite` with a bounded,
- * URL-safe token hash is accepted; anything else is rejected without detail.
- * The token itself is only ever forwarded to Supabase verifyOtp — never logged,
- * stored or reflected.
- */
-export function parseInviteCallback(tokenHash: string | null, type: string | null): { ok: true; tokenHash: string } | { ok: false } {
-  if (type !== "invite") return { ok: false };
-  if (typeof tokenHash !== "string" || !TOKEN_HASH_RE.test(tokenHash)) return { ok: false };
-  return { ok: true, tokenHash };
-}
 
 export type AccountSetupError = "missing_field" | "duplicate_field" | "unexpected_field" | "password_too_short" | "password_too_long" | "password_mismatch";
 
