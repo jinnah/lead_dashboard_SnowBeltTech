@@ -181,7 +181,7 @@ describe("assignment authorization", () => {
 describe("dual-role platform administrator (corrective hardening)", () => {
   // state now: A3 -> staff (from the authorization tests). The administrator is
   // temporarily given a REAL active owner/manager membership in Business A.
-  const withAdminMembership = async (role: "BUSINESS_OWNER" | "BUSINESS_MANAGER", fn: () => Promise<void>) => {
+  const withAdminMembership = async (role: "BUSINESS_OWNER" | "BUSINESS_MANAGER" | "BUSINESS_STAFF", fn: () => Promise<void>) => {
     sql(`insert into public.business_memberships (business_id, user_id, role, status) values ('${BIZ_A}', '${ADMIN}', '${role}', 'active')
          on conflict (business_id, user_id) do update set role = excluded.role, status = 'active'`);
     try { await fn(); } finally { sql(`delete from public.business_memberships where user_id = '${ADMIN}'`); }
@@ -229,6 +229,72 @@ describe("dual-role platform administrator (corrective hardening)", () => {
     expect(sql(`select count(*) from public.business_memberships where user_id = '${ADMIN}'`)).toBe("0");
     expect(assignedTo(LEAD_A3)).toBe(A_STAFF);
     expect(assignActs(LEAD_A3)).toBe(actsBefore);
+  });
+  it("cannot mutate lead status, follow-up or notes either — the shared helper excludes platform roles (corrective 4A-H)", async () => {
+    // A3 -> staff at this point. Give it a follow-up via privileged FIXTURE sql only; restored in finally.
+    const FOLLOW = "2032-04-01 10:30:00.25+00";
+    sql(`update public.leads set follow_up_at = '${FOLLOW}' where id = '${LEAD_A3}'`);
+    const leadState = () => sql(`select status || '|' || coalesce(follow_up_at::text, '-') || '|' || coalesce(assigned_to::text, '-') from public.leads where id = '${LEAD_A3}'`);
+    const noteCount = () => Number(sql(`select count(*) from public.lead_activities where lead_id = '${LEAD_A3}' and activity_type = 'note_added'`));
+    try {
+      const before = leadState();
+      expect(before).toBe(`contacted|${FOLLOW}|${A_STAFF}`); // seeded A3 status; follow-up from the fixture; assigned earlier in this suite
+      const actsBefore = Number(sql(`select count(*) from public.lead_activities where lead_id = '${LEAD_A3}'`));
+      const notesBefore = noteCount();
+      for (const role of ["BUSINESS_OWNER", "BUSINESS_MANAGER", "BUSINESS_STAFF"] as const) {
+        await withAdminMembership(role, async () => {
+          const sb = createClient(SUPABASE_URL, ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+          expect((await sb.auth.signInWithPassword({ email: "platform-admin@example.invalid", password: PASSWORD })).error, role).toBeNull();
+          try {
+            // the administrator can still SELECT the lead...
+            const visible = await sb.from("leads").select("id, status, follow_up_at").eq("id", LEAD_A3).maybeSingle<{ id: string }>();
+            expect(visible.data?.id, role).toBe(LEAD_A3);
+            // ...but every direct mutation is a zero-row RLS no-op (no error required), not a change
+            const st = await sb.from("leads").update({ status: "contacted" }).eq("id", LEAD_A3).select("id");
+            expect(st.error, role).toBeNull();
+            expect(st.data, role).toEqual([]);
+            const fu = await sb.from("leads").update({ follow_up_at: "2033-01-01T00:00:00Z" }).eq("id", LEAD_A3).select("id");
+            expect(fu.data, role).toEqual([]);
+            const clear = await sb.from("leads").update({ follow_up_at: null }).eq("id", LEAD_A3).select("id");
+            expect(clear.data, role).toEqual([]);
+            const note = await sb.rpc("add_lead_note", { p_lead_id: LEAD_A3, p_note: "synthetic unauthorized administrator note", p_request_id: "88888888-8888-4888-8888-888888888888" });
+            expect(note.error?.code, role).toBe("P0002");
+            const assign = await sb.rpc("set_lead_assignee", { p_lead_id: LEAD_A3, p_assignee_id: null });
+            expect(assign.error?.code, role).toBe("P0002");
+          } finally {
+            await sb.auth.signOut({ scope: "local" });
+          }
+          expect(leadState(), role).toBe(before);
+          expect(Number(sql(`select count(*) from public.lead_activities where lead_id = '${LEAD_A3}'`)), role).toBe(actsBefore);
+          expect(noteCount(), role).toBe(notesBefore);
+        });
+      }
+      // administrator surfaces still work: reads, admin pages, and a real Batch 4A platform route
+      const admin = await login("platform-admin@example.invalid");
+      expect((await admin.get("/admin")).status).toBe(200);
+      expect((await admin.get(`/admin/businesses/${BIZ_A}`)).status).toBe(200);
+      expect((await admin.get(`/admin/leads/${LEAD_A3}`)).status).toBe(200);
+      expect((await admin.post(`/api/leads/${LEAD_A3}/actions`, { action: "set_status", status: "contacted" })).status).toBe(404);
+      const op = await admin.post(`/api/admin/businesses/${BIZ_A}/actions`, { action: "set_business_status", status: "active" });
+      expect(op.status).toBe(303);
+      expect(op.location).toMatch(/ok=business_status_updated$/);
+      expect(sql(`select status from public.businesses where id = '${BIZ_A}'`)).toBe("active");
+      const sb = createClient(SUPABASE_URL, ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+      expect((await sb.auth.signInWithPassword({ email: "platform-admin@example.invalid", password: PASSWORD })).error).toBeNull();
+      try {
+        const sources = await sb.from("integration_sources").select("id");
+        expect(sources.error).toBeNull();
+        expect((sources.data ?? []).length).toBeGreaterThan(0);
+        const events = await sb.from("platform_admin_events").select("id");
+        expect(events.error).toBeNull(); // readable (no rows required)
+      } finally {
+        await sb.auth.signOut({ scope: "local" });
+      }
+      expect(leadState()).toBe(before);
+    } finally {
+      sql(`update public.leads set follow_up_at = null where id = '${LEAD_A3}';
+           delete from public.business_memberships where user_id = '${ADMIN}';`);
+    }
   });
 });
 
