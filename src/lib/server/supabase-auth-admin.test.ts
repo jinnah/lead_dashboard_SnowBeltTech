@@ -5,11 +5,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // a wrong id can never remove an unrelated account.
 const getUserById = vi.fn();
 const deleteUser = vi.fn();
+const inviteUserByEmail = vi.fn();
 vi.mock("@supabase/supabase-js", () => ({
-  createClient: () => ({ auth: { admin: { getUserById, deleteUser, inviteUserByEmail: vi.fn() } } }),
+  createClient: () => ({ auth: { admin: { getUserById, deleteUser, inviteUserByEmail } } }),
 }));
 
 const USER = "d0000000-0000-4000-8000-0000000000d1";
+const INV = "c0000000-0000-4000-8000-0000000000c1";
 
 async function loadModule() {
   vi.resetModules();
@@ -22,6 +24,21 @@ async function loadModule() {
 beforeEach(() => {
   getUserById.mockReset();
   deleteUser.mockReset();
+  inviteUserByEmail.mockReset();
+});
+
+describe("inviteAuthUser provenance marker", () => {
+  it("persists the invitation UUID under the narrow metadata key on the invited account", async () => {
+    const mod = await loadModule();
+    inviteUserByEmail.mockResolvedValue({ data: { user: { id: USER } }, error: null });
+    const r = await mod.inviteAuthUser("invitee@example.invalid", "http://127.0.0.1:3000", INV);
+    expect(r).toEqual({ ok: true, userId: USER });
+    expect(inviteUserByEmail).toHaveBeenCalledExactlyOnceWith("invitee@example.invalid", {
+      redirectTo: "http://127.0.0.1:3000",
+      data: { [mod.INVITATION_MARKER_KEY]: INV },
+    });
+    expect(mod.INVITATION_MARKER_KEY).toBe("portal_invitation_id");
+  });
 });
 
 describe("deleteUnacceptedAuthUser guard", () => {

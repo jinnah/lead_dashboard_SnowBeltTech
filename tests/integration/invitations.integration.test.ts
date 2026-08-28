@@ -182,6 +182,8 @@ describe("owner invitation end to end", () => {
     expect(invStatus).toBe("sent");
     expect(invAuth).toBe(userId(OWNER_EMAIL));
     expect(authUsers(OWNER_EMAIL)).toBe(1);
+    // the exact provenance marker is really persisted by GoTrue on the invited account
+    expect(sql(`select raw_user_meta_data->>'portal_invitation_id' from auth.users where lower(email) = '${OWNER_EMAIL}'`)).toBe(invId);
 
     // duplicates and already-registered emails are refused without another email
     expect((await invite(admin, id, OWNER_EMAIL, "Dup", "BUSINESS_OWNER")).location).toMatch(/err=invitation_exists$/);

@@ -24,9 +24,18 @@ function authAdmin() {
 
 export type AuthInviteResult = { ok: true; userId: string } | { ok: false; category: "email_exists" | "rate_limited" | "failed" };
 
-/** Sends the local invitation email and creates the invited Auth account. */
-export async function inviteAuthUser(email: string, redirectTo: string): Promise<AuthInviteResult> {
-  const { data, error } = await authAdmin().inviteUserByEmail(email, { redirectTo });
+/** User-metadata key that carries the invitation's own UUID as an exact provenance marker. */
+export const INVITATION_MARKER_KEY = "portal_invitation_id";
+
+/**
+ * Sends the local invitation email and creates the invited Auth account. The
+ * invitation's UUID is persisted on that account under INVITATION_MARKER_KEY,
+ * so failed-delivery compensation can identify the account created by this
+ * exact attempt with exact equality — never by email/time inference. The
+ * marker is provenance-for-deletion only and is never read for authorization.
+ */
+export async function inviteAuthUser(email: string, redirectTo: string, invitationId: string): Promise<AuthInviteResult> {
+  const { data, error } = await authAdmin().inviteUserByEmail(email, { redirectTo, data: { [INVITATION_MARKER_KEY]: invitationId } });
   if (error || !data.user?.id) {
     const status = error && "status" in error ? (error as { status?: number }).status : undefined;
     if (status === 422 || /already.*registered/i.test(error?.message ?? "")) return { ok: false, category: "email_exists" };

@@ -139,6 +139,8 @@ describe("finalization-failure compensation", () => {
     });
     expect(await inviteCustomerMember(viewer, "req-7", BIZ, EMAIL, NAME, "BUSINESS_STAFF")).toBe("invited");
     expect(deleteUnacceptedAuthUser).not.toHaveBeenCalled();
+    // the exact per-invitation provenance marker travels into the Auth invite call
+    expect(inviteAuthUser).toHaveBeenCalledExactlyOnceWith(EMAIL, expect.stringMatching(/^https?:\/\//), INV);
     expectNoLeakage();
   });
   it("prepare failures never reach Supabase Auth at all", async () => {

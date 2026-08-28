@@ -44,7 +44,7 @@ export async function inviteCustomerMember(
   }
   const invitationId = prepared.data.invitation_id;
 
-  const invited = await inviteAuthUser(email, getAppBaseUrl());
+  const invited = await inviteAuthUser(email, getAppBaseUrl(), invitationId);
   if (!invited.ok) {
     // Mark failed FIRST (acceptance becomes impossible), then remove the Auth
     // account this attempt created, if the database positively identified one.
