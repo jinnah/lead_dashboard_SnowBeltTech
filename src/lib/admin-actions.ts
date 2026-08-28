@@ -5,7 +5,7 @@
 // duplicated fields are errors, never guesses.
 
 export const PLATFORM_ACTIONS = ["create_business"] as const;
-export const BUSINESS_ACTIONS = ["set_business_status", "create_source", "set_source_status"] as const;
+export const BUSINESS_ACTIONS = ["set_business_status", "create_source", "set_source_status", "invite_member", "revoke_invitation", "set_member_role", "set_member_status"] as const;
 export type PlatformAction = (typeof PLATFORM_ACTIONS)[number];
 export type BusinessAction = (typeof BUSINESS_ACTIONS)[number];
 export type AdminActionName = PlatformAction | BusinessAction;
@@ -16,7 +16,26 @@ export const ADMIN_ACTION_FIELDS: Record<AdminActionName, { required: readonly s
   set_business_status: { required: ["action", "status"], optional: [] },
   create_source: { required: ["action", "kind", "external_id"], optional: ["label", "allowed_origin"] },
   set_source_status: { required: ["action", "source_id", "status"], optional: [] },
+  invite_member: { required: ["action", "email", "display_name", "role"], optional: [] },
+  revoke_invitation: { required: ["action", "invitation_id"], optional: [] },
+  set_member_role: { required: ["action", "user_id", "role"], optional: [] },
+  set_member_status: { required: ["action", "user_id", "status"], optional: [] },
 };
+
+export const CUSTOMER_ROLES = ["BUSINESS_OWNER", "BUSINESS_MANAGER", "BUSINESS_STAFF"] as const;
+export const CUSTOMER_ROLE_LABELS: Record<(typeof CUSTOMER_ROLES)[number], string> = {
+  BUSINESS_OWNER: "Owner", BUSINESS_MANAGER: "Manager", BUSINESS_STAFF: "Staff",
+};
+export const MEMBER_STATUS_TARGETS = ["active", "inactive"] as const;
+export const EMAIL_MAX = 320;
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
+/** Normalized (trimmed, lowercased) email, or null when invalid. */
+export function normalizeInviteEmail(value: string): string | null {
+  const email = value.trim().toLowerCase();
+  if (email.length < 6 || email.length > EMAIL_MAX || !EMAIL_RE.test(email)) return null;
+  return email;
+}
 
 export const INDUSTRIES = [
   "hvac", "plumbing", "roofing", "landscaping", "cleaning", "auto_repair",
@@ -81,16 +100,23 @@ export type ParsedAdminAction =
   | { kind: "create_business"; name: string; slug: string; industry: (typeof INDUSTRIES)[number]; timezone: string }
   | { kind: "set_business_status"; status: (typeof BUSINESS_STATUS_TARGETS)[number] }
   | { kind: "create_source"; sourceKind: (typeof REGISTRABLE_SOURCE_KINDS)[number]; externalId: string; label: string | null; allowedOrigin: string | null }
-  | { kind: "set_source_status"; sourceId: string; status: (typeof SOURCE_STATUS_TARGETS)[number] };
+  | { kind: "set_source_status"; sourceId: string; status: (typeof SOURCE_STATUS_TARGETS)[number] }
+  | { kind: "invite_member"; email: string; displayName: string; role: (typeof CUSTOMER_ROLES)[number] }
+  | { kind: "revoke_invitation"; invitationId: string }
+  | { kind: "set_member_role"; userId: string; role: (typeof CUSTOMER_ROLES)[number] }
+  | { kind: "set_member_status"; userId: string; status: (typeof MEMBER_STATUS_TARGETS)[number] };
 
 export type AdminActionError =
   | "unsupported_action" | "unexpected_field" | "missing_field" | "duplicate_field"
   | "invalid_name" | "invalid_slug" | "invalid_industry" | "invalid_timezone"
-  | "invalid_kind" | "invalid_external_id" | "invalid_label" | "invalid_origin" | "invalid_status" | "invalid_source";
+  | "invalid_kind" | "invalid_external_id" | "invalid_label" | "invalid_origin" | "invalid_status" | "invalid_source"
+  | "invalid_email" | "invalid_display_name" | "invalid_role" | "invalid_member" | "invalid_invitation";
 
 /** Database outcomes mapped to allow-listed codes (never the SQL message). */
-export type AdminResultError = AdminActionError | "slug_taken" | "source_taken" | "not_found" | "not_operable" | "not_allowed" | "failed";
-export type AdminOk = "business_created" | "business_status_updated" | "source_created" | "source_status_updated";
+export type AdminResultError = AdminActionError | "slug_taken" | "source_taken" | "not_found" | "not_operable" | "not_allowed" | "failed"
+  | "email_in_use" | "invitation_exists" | "invite_delivery_failed" | "owner_required" | "last_owner" | "invalid_input";
+export type AdminOk = "business_created" | "business_status_updated" | "source_created" | "source_status_updated"
+  | "invited" | "invitation_revoked" | "member_role_updated" | "member_status_updated";
 
 export const ADMIN_ERROR_MESSAGES: Record<AdminResultError, string> = {
   unsupported_action: "That action is not supported.",
@@ -113,6 +139,17 @@ export const ADMIN_ERROR_MESSAGES: Record<AdminResultError, string> = {
   not_operable: "Archived or suspended businesses cannot be changed this way.",
   not_allowed: "Only active platform administrators can perform this operation.",
   failed: "The operation could not be completed. Please try again.",
+  invalid_email: "Enter a valid email address (up to 320 characters).",
+  invalid_display_name: "Enter a display name between 1 and 100 characters.",
+  invalid_role: "Choose a customer role from the list.",
+  invalid_member: "Choose a team member from the list.",
+  invalid_invitation: "Choose an invitation from the list.",
+  email_in_use: "That email address already has an account.",
+  invitation_exists: "A live invitation already exists for that email address.",
+  invite_delivery_failed: "The invitation could not be delivered. It was marked failed; you can send a new one.",
+  owner_required: "An unprovisioned business must invite a business owner first.",
+  last_owner: "A business must keep at least one active owner. Promote another member to owner first.",
+  invalid_input: "The submitted details were rejected. Check the form and try again.",
 };
 
 export const ADMIN_OK_MESSAGES: Record<AdminOk, string> = {
@@ -120,14 +157,21 @@ export const ADMIN_OK_MESSAGES: Record<AdminOk, string> = {
   business_status_updated: "Business status updated.",
   source_created: "Integration source registered.",
   source_status_updated: "Source status updated.",
+  invited: "Invitation sent.",
+  invitation_revoked: "Invitation revoked.",
+  member_role_updated: "Member role updated.",
+  member_status_updated: "Membership status updated.",
 };
 
 /** The RPCs' 22023 messages, matched by prefix only; the message itself is never surfaced. */
-const VALIDATION_PREFIXES: ReadonlyArray<[string, AdminActionError]> = [
+const VALIDATION_PREFIXES: ReadonlyArray<[string, AdminResultError]> = [
   ["name must", "invalid_name"], ["slug must", "invalid_slug"], ["unsupported industry", "invalid_industry"],
   ["unsupported timezone", "invalid_timezone"], ["unsupported integration source kind", "invalid_kind"],
   ["external identifier", "invalid_external_id"], ["label must", "invalid_label"],
   ["allowed origin", "invalid_origin"], ["voice sources", "invalid_origin"], ["status must", "invalid_status"],
+  ["invitation email", "invalid_email"], ["display name must", "invalid_display_name"],
+  ["unsupported customer role", "invalid_role"], ["unsupported membership status", "invalid_status"],
+  ["first member must", "owner_required"], ["email already registered", "email_in_use"],
 ];
 
 /** Maps a Supabase/Postgres error from an admin RPC to an allow-listed result code (never the SQL text). */
@@ -135,12 +179,19 @@ export function mapAdminRpcError(sqlstate: string | null | undefined, message: s
   switch (sqlstate) {
     case "42501": return "not_allowed";
     case "P0002": return "not_found";
-    case "55000": return "not_operable";
-    case "23505": return action === "create_business" ? "slug_taken" : "source_taken";
+    case "55000": {
+      const m55 = (message ?? "").toLowerCase();
+      if (m55.startsWith("cannot demote") || m55.startsWith("cannot deactivate")) return "last_owner";
+      return "not_operable";
+    }
+    case "23505": return action === "create_business" ? "slug_taken" : action === "invite_member" ? "invitation_exists" : "source_taken";
     case "22023": {
       const m = (message ?? "").toLowerCase();
       for (const [prefix, code] of VALIDATION_PREFIXES) if (m.startsWith(prefix)) return code;
-      return action === "create_business" ? "invalid_name" : action === "create_source" ? "invalid_external_id" : "invalid_status";
+      if (action === "create_business") return "invalid_name";
+      if (action === "create_source") return "invalid_external_id";
+      if (action === "invite_member") return "invalid_input";
+      return "invalid_status";
     }
     default: return "failed";
   }
@@ -216,6 +267,34 @@ export function parseAdminAction(fields: URLSearchParams, scope: "platform" | "b
       if (!(SOURCE_STATUS_TARGETS as readonly string[]).includes(status)) return { ok: false, error: "invalid_status" };
       return { ok: true, action: { kind: "set_source_status", sourceId: sourceId.toLowerCase(), status: status as (typeof SOURCE_STATUS_TARGETS)[number] } };
     }
+    case "invite_member": {
+      const email = normalizeInviteEmail(got.email!);
+      if (!email) return { ok: false, error: "invalid_email" };
+      const displayName = got.display_name!.trim();
+      if (displayName.length < 1 || displayName.length > 100) return { ok: false, error: "invalid_display_name" };
+      const role = got.role!;
+      if (!(CUSTOMER_ROLES as readonly string[]).includes(role)) return { ok: false, error: "invalid_role" };
+      return { ok: true, action: { kind: "invite_member", email, displayName, role: role as (typeof CUSTOMER_ROLES)[number] } };
+    }
+    case "revoke_invitation": {
+      const invitationId = got.invitation_id!;
+      if (!UUID.test(invitationId)) return { ok: false, error: "invalid_invitation" };
+      return { ok: true, action: { kind: "revoke_invitation", invitationId: invitationId.toLowerCase() } };
+    }
+    case "set_member_role": {
+      const userId = got.user_id!;
+      if (!UUID.test(userId)) return { ok: false, error: "invalid_member" };
+      const role = got.role!;
+      if (!(CUSTOMER_ROLES as readonly string[]).includes(role)) return { ok: false, error: "invalid_role" };
+      return { ok: true, action: { kind: "set_member_role", userId: userId.toLowerCase(), role: role as (typeof CUSTOMER_ROLES)[number] } };
+    }
+    case "set_member_status": {
+      const userId = got.user_id!;
+      if (!UUID.test(userId)) return { ok: false, error: "invalid_member" };
+      const status = got.status!;
+      if (!(MEMBER_STATUS_TARGETS as readonly string[]).includes(status)) return { ok: false, error: "invalid_status" };
+      return { ok: true, action: { kind: "set_member_status", userId: userId.toLowerCase(), status: status as (typeof MEMBER_STATUS_TARGETS)[number] } };
+    }
   }
 }
 
@@ -229,6 +308,31 @@ export interface AdminEventRow {
   new_value: string | null;
   created_at: string;
 }
+/** Human text for a customer_access_events row. Roles/statuses and names only — never emails. */
+export interface AccessEventRow {
+  id: string;
+  event_type: string;
+  invitation_id: string | null;
+  target_user_id: string | null;
+  actor_display_name: string | null;
+  old_value: string | null;
+  new_value: string | null;
+  created_at: string;
+}
+const ROLE_SHORT: Record<string, string> = { BUSINESS_OWNER: "Owner", BUSINESS_MANAGER: "Manager", BUSINESS_STAFF: "Staff" };
+export function describeAccessEvent(e: AccessEventRow, nameFor: (userId: string | null) => string): string {
+  switch (e.event_type) {
+    case "invitation_prepared": return "Invitation prepared";
+    case "invitation_sent": return "Invitation sent";
+    case "invitation_failed": return "Invitation delivery failed";
+    case "invitation_revoked": return "Invitation revoked";
+    case "invitation_accepted": return `Invitation accepted by ${nameFor(e.target_user_id)}`;
+    case "membership_role_changed": return `${nameFor(e.target_user_id)}: ${ROLE_SHORT[e.old_value ?? ""] ?? e.old_value} → ${ROLE_SHORT[e.new_value ?? ""] ?? e.new_value}`;
+    case "membership_status_changed": return `${nameFor(e.target_user_id)}: membership ${e.old_value} → ${e.new_value}`;
+    default: return "Access change";
+  }
+}
+
 export function describeAdminEvent(e: AdminEventRow, sourceLabel: (id: string) => string): string {
   const src = e.integration_source_id ? sourceLabel(e.integration_source_id) : "source";
   switch (e.event_type) {

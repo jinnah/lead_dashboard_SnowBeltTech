@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  ADMIN_ERROR_MESSAGES, ADMIN_OK_MESSAGES, describeAdminEvent, isCanonicalHttpsOrigin, isSupportedTimeZone,
-  isValidExternalId, mapAdminRpcError, parseAdminAction, REGISTRABLE_SOURCE_KINDS,
+  ADMIN_ERROR_MESSAGES, ADMIN_OK_MESSAGES, describeAccessEvent, describeAdminEvent, isCanonicalHttpsOrigin,
+  isSupportedTimeZone, isValidExternalId, mapAdminRpcError, normalizeInviteEmail, parseAdminAction, REGISTRABLE_SOURCE_KINDS,
 } from "./admin-actions";
 
 const pp = (s: string) => parseAdminAction(new URLSearchParams(s), "platform");
@@ -128,5 +128,78 @@ describe("result mapping and messages", () => {
     expect(describeAdminEvent({ ...row, event_type: "business_status_changed", integration_source_id: null, old_value: "active", new_value: "suspended" }, () => "x")).toBe("Business active → suspended");
     expect(describeAdminEvent({ ...row, event_type: "integration_source_created" }, () => "Charlie form")).toBe("Registered Charlie form");
     expect(describeAdminEvent({ ...row, event_type: "something_else" }, () => "x")).toBe("Platform operation");
+  });
+});
+
+describe("invitation form parsing", () => {
+  const OWNER_INVITE = "action=invite_member&email=owner%40charlie.example.invalid&display_name=Charlie+Owner&role=BUSINESS_OWNER";
+  it("accepts a complete invitation and normalizes the email", () => {
+    expect(pb(OWNER_INVITE)).toEqual({ ok: true, action: { kind: "invite_member", email: "owner@charlie.example.invalid", displayName: "Charlie Owner", role: "BUSINESS_OWNER" } });
+    expect(pb("action=invite_member&email=++Mixed.Case%40Example.INVALID++&display_name=X&role=BUSINESS_STAFF")).toMatchObject({ ok: true, action: { email: "mixed.case@example.invalid" } });
+    expect(normalizeInviteEmail("  UPPER@Example.Invalid  ")).toBe("upper@example.invalid");
+  });
+  it("rejects malformed, padded-only, overlong emails and bad names/roles", () => {
+    for (const e of ["", "   ", "plain", "a@b", "a b@c.invalid", "a@b .invalid", `${"x".repeat(320)}@ex.invalid`]) {
+      expect(pb(`action=invite_member&email=${encodeURIComponent(e)}&display_name=X&role=BUSINESS_STAFF`), e).toEqual({ ok: false, error: "invalid_email" });
+      expect(normalizeInviteEmail(e), e).toBeNull();
+    }
+    expect(pb("action=invite_member&email=a%40b.invalid&display_name=++&role=BUSINESS_STAFF")).toEqual({ ok: false, error: "invalid_display_name" });
+    expect(pb(`action=invite_member&email=a%40b.invalid&display_name=${"n".repeat(101)}&role=BUSINESS_STAFF`)).toEqual({ ok: false, error: "invalid_display_name" });
+    for (const r of ["PLATFORM_ADMIN", "OWNER", "business_owner", ""]) {
+      expect(pb(`action=invite_member&email=a%40b.invalid&display_name=X&role=${r}`), r).toEqual({ ok: false, error: "invalid_role" });
+    }
+  });
+  it("enforces exact field cardinality and the allow-list", () => {
+    expect(pb("action=invite_member&email=a%40b.invalid&display_name=X")).toEqual({ ok: false, error: "missing_field" });
+    expect(pb(`${OWNER_INVITE}&email=second%40b.invalid`)).toEqual({ ok: false, error: "duplicate_field" });
+    for (const extra of ["business_id=x", "actor_id=x", "platform_role=PLATFORM_ADMIN", "redirect_to=https://evil.invalid", "auth_user_id=x", "service_key=x"]) {
+      expect(pb(`${OWNER_INVITE}&${extra}`), extra).toEqual({ ok: false, error: "unexpected_field" });
+    }
+  });
+});
+
+describe("invitation revocation and membership parsing", () => {
+  const U = "a1000000-0000-4000-8000-000000000003";
+  it("revoke requires exactly one invitation UUID", () => {
+    expect(pb(`action=revoke_invitation&invitation_id=${U.toUpperCase()}`)).toEqual({ ok: true, action: { kind: "revoke_invitation", invitationId: U } });
+    expect(pb("action=revoke_invitation&invitation_id=not-a-uuid")).toEqual({ ok: false, error: "invalid_invitation" });
+    expect(pb("action=revoke_invitation")).toEqual({ ok: false, error: "missing_field" });
+    expect(pb(`action=revoke_invitation&invitation_id=${U}&invitation_id=${U}`)).toEqual({ ok: false, error: "duplicate_field" });
+    expect(pb(`action=revoke_invitation&invitation_id=${U}&email=x%40y.invalid`)).toEqual({ ok: false, error: "unexpected_field" });
+  });
+  it("member role and status changes validate UUIDs and allow-lists", () => {
+    expect(pb(`action=set_member_role&user_id=${U}&role=BUSINESS_MANAGER`)).toEqual({ ok: true, action: { kind: "set_member_role", userId: U, role: "BUSINESS_MANAGER" } });
+    expect(pb(`action=set_member_role&user_id=${U}&role=PLATFORM_ADMIN`)).toEqual({ ok: false, error: "invalid_role" });
+    expect(pb("action=set_member_role&user_id=nope&role=BUSINESS_STAFF")).toEqual({ ok: false, error: "invalid_member" });
+    expect(pb(`action=set_member_status&user_id=${U}&status=inactive`)).toEqual({ ok: true, action: { kind: "set_member_status", userId: U, status: "inactive" } });
+    expect(pb(`action=set_member_status&user_id=${U}&status=active`)).toMatchObject({ ok: true });
+    for (const st of ["suspended", "ACTIVE", "", "deleted"]) {
+      expect(pb(`action=set_member_status&user_id=${U}&status=${st}`), st).toEqual({ ok: false, error: "invalid_status" });
+    }
+    expect(pb(`action=set_member_status&user_id=${U}&status=active&status=inactive`)).toEqual({ ok: false, error: "duplicate_field" });
+    expect(pb(`action=set_member_role&user_id=${U}&role=BUSINESS_OWNER&business_id=x`)).toEqual({ ok: false, error: "unexpected_field" });
+  });
+  it("maps the new database outcomes to allow-listed codes", () => {
+    expect(mapAdminRpcError("22023", "invitation email is invalid", "invite_member")).toBe("invalid_email");
+    expect(mapAdminRpcError("22023", "display name must be 1-100 characters", "invite_member")).toBe("invalid_display_name");
+    expect(mapAdminRpcError("22023", "unsupported customer role", "set_member_role")).toBe("invalid_role");
+    expect(mapAdminRpcError("22023", "unsupported membership status", "set_member_status")).toBe("invalid_status");
+    expect(mapAdminRpcError("22023", "first member must be a business owner", "invite_member")).toBe("owner_required");
+    expect(mapAdminRpcError("22023", "email already registered", "invite_member")).toBe("email_in_use");
+    expect(mapAdminRpcError("23505", "invitation already active for this email", "invite_member")).toBe("invitation_exists");
+    expect(mapAdminRpcError("55000", "cannot demote the last active owner", "set_member_role")).toBe("last_owner");
+    expect(mapAdminRpcError("55000", "cannot deactivate the last active owner", "set_member_status")).toBe("last_owner");
+    expect(mapAdminRpcError("55000", "business is not active", "invite_member")).toBe("not_operable");
+    expect(mapAdminRpcError("P0002", "membership not found", "set_member_role")).toBe("not_found");
+  });
+  it("describes access events with names and statuses only (never emails)", () => {
+    const row = { id: "e", event_type: "membership_role_changed", invitation_id: null, target_user_id: "u", actor_display_name: "Admin", old_value: "BUSINESS_OWNER", new_value: "BUSINESS_MANAGER", created_at: "2026-08-27T00:00:00Z" };
+    expect(describeAccessEvent(row, () => "Charlie Owner")).toBe("Charlie Owner: Owner → Manager");
+    expect(describeAccessEvent({ ...row, event_type: "membership_status_changed", old_value: "active", new_value: "inactive" }, () => "Charlie Owner")).toContain("membership active");
+    expect(describeAccessEvent({ ...row, event_type: "invitation_accepted" }, () => "Charlie Owner")).toBe("Invitation accepted by Charlie Owner");
+    for (const t of ["invitation_prepared", "invitation_sent", "invitation_failed", "invitation_revoked"]) {
+      const text = describeAccessEvent({ ...row, event_type: t }, () => "x");
+      expect(text).not.toContain("@");
+    }
   });
 });

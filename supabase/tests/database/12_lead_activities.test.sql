@@ -31,8 +31,9 @@ select is(has_function_privilege('public', 'public.add_lead_note(uuid,text,uuid)
 select is(has_function_privilege('authenticated', 'public.add_lead_note(uuid,text,uuid)', 'EXECUTE'), true, 'authenticated can execute add_lead_note');
 select is(has_function_privilege('authenticated', 'private.audit_lead_changes()', 'EXECUTE'), false, 'authenticated cannot execute the audit function directly');
 select set_eq($$select p.proname::text from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public'$$,
-  array['ingest_lead_event', 'add_lead_note', 'set_lead_assignee', 'admin_create_business', 'admin_set_business_status', 'admin_create_integration_source', 'admin_set_integration_source_status'],
-  'public schema exposes exactly the seven reviewed RPCs');
+  array['ingest_lead_event', 'add_lead_note', 'set_lead_assignee', 'admin_create_business', 'admin_set_business_status', 'admin_create_integration_source', 'admin_set_integration_source_status',
+  'admin_prepare_customer_invitation', 'admin_mark_customer_invitation_sent', 'admin_mark_customer_invitation_failed', 'admin_revoke_customer_invitation', 'accept_customer_invitation', 'admin_set_business_member_role', 'admin_set_business_member_status'],
+  'public schema exposes exactly the fourteen reviewed RPCs');
 
 -- =====================================================================================
 -- automatic audit of status / follow-up (authenticated member)

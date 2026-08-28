@@ -21,9 +21,10 @@ select is(has_function_privilege('anon', 'private.active_business_ids()', 'EXECU
 select is(has_function_privilege('public', 'private.active_business_ids()', 'EXECUTE'), false, 'PUBLIC cannot execute');
 select ok((select prosrc like '%platform_role is null%' from pg_proc where oid = 'private.active_business_ids()'::regprocedure), 'platform-role exclusion present in the helper');
 select set_eq($$select p.proname::text from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public'$$,
-  array['ingest_lead_event', 'add_lead_note', 'set_lead_assignee', 'admin_create_business', 'admin_set_business_status', 'admin_create_integration_source', 'admin_set_integration_source_status'],
-  'public RPC inventory unchanged');
-select is((select count(*) from pg_policies where schemaname = 'public'), 10::bigint, 'RLS policy inventory unchanged (10 policies)');
+  array['ingest_lead_event', 'add_lead_note', 'set_lead_assignee', 'admin_create_business', 'admin_set_business_status', 'admin_create_integration_source', 'admin_set_integration_source_status',
+  'admin_prepare_customer_invitation', 'admin_mark_customer_invitation_sent', 'admin_mark_customer_invitation_failed', 'admin_revoke_customer_invitation', 'accept_customer_invitation', 'admin_set_business_member_role', 'admin_set_business_member_status'],
+  'public RPC inventory: exactly the fourteen reviewed RPCs');
+select is((select count(*) from pg_policies where schemaname = 'public'), 12::bigint, 'RLS policy inventory: the 12 reviewed policies');
 
 -- =====================================================================================
 -- fixture: give lead A3 a microsecond-precision follow-up via a legitimate staff session

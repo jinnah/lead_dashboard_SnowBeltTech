@@ -41,6 +41,38 @@ describe("privileged module isolation", () => {
       }
     }
   });
+  it("the Auth Admin boundary is reachable only from the invitation coordinator", () => {
+    for (const file of walk(src).filter((f) => /\.(ts|tsx)$/.test(f) && !f.endsWith(".test.ts"))) {
+      const text = readFileSync(file, "utf8");
+      const rel = path.relative(root, file).replace(/\\/g, "/");
+      if (text.includes("supabase-auth-admin") && rel !== "src/lib/server/supabase-auth-admin.ts") {
+        expect(rel, "supabase-auth-admin imported outside the coordinator").toBe("src/lib/server/invitations.ts");
+      }
+    }
+  });
+  it("privileged clients stay out of pages and customer routes", () => {
+    const allowedAdminImporters = new Set([
+      "src/lib/server/supabase-admin.ts",
+      "src/lib/server/ingest.ts", // reviewed ingestion path
+    ]);
+    const allowedCoordinatorImporters = new Set([
+      "src/lib/server/invitations.ts",
+      "src/app/api/admin/businesses/[id]/actions/route.ts", // reviewed invitation route
+    ]);
+    for (const file of walk(src).filter((f) => /\.(ts|tsx)$/.test(f) && !f.endsWith(".test.ts"))) {
+      const text = readFileSync(file, "utf8");
+      const rel = path.relative(root, file).replace(/\\/g, "/");
+      if (rel.endsWith("page.tsx")) {
+        expect(text.includes("supabase-admin") || text.includes("supabase-auth-admin") || text.includes("server/invitations"), `${rel} touches a privileged module`).toBe(false);
+      }
+      if (text.includes("supabase-admin") && !text.includes("supabase-auth-admin") && rel !== "src/lib/server/supabase-admin.ts" && rel !== "src/lib/server/supabase-server.ts") {
+        expect(allowedAdminImporters.has(rel), `${rel} imports the ingestion service client`).toBe(true);
+      }
+      if (text.includes("server/invitations") && rel !== "src/lib/server/invitations.ts") {
+        expect(allowedCoordinatorImporters.has(rel), `${rel} imports the invitation coordinator`).toBe(true);
+      }
+    }
+  });
   it(".env.example never places a secret under NEXT_PUBLIC_ and holds placeholders only", () => {
     const example = readFileSync(path.join(root, ".env.example"), "utf8");
     for (const line of example.split(/\r?\n/).filter((l) => l.startsWith("NEXT_PUBLIC_"))) {

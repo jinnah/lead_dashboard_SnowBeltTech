@@ -23,8 +23,9 @@ select ok((select pg_get_triggerdef(oid) ilike '%assigned_to%' from pg_trigger w
 select has_column('public', 'lead_activities', 'old_display_value', 'old_display_value column');
 select has_column('public', 'lead_activities', 'new_display_value', 'new_display_value column');
 select set_eq($$select p.proname::text from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public'$$,
-  array['ingest_lead_event', 'add_lead_note', 'set_lead_assignee', 'admin_create_business', 'admin_set_business_status', 'admin_create_integration_source', 'admin_set_integration_source_status'],
-  'public schema exposes exactly the seven reviewed RPCs');
+  array['ingest_lead_event', 'add_lead_note', 'set_lead_assignee', 'admin_create_business', 'admin_set_business_status', 'admin_create_integration_source', 'admin_set_integration_source_status',
+  'admin_prepare_customer_invitation', 'admin_mark_customer_invitation_sent', 'admin_mark_customer_invitation_failed', 'admin_revoke_customer_invitation', 'accept_customer_invitation', 'admin_set_business_member_role', 'admin_set_business_member_status'],
+  'public schema exposes exactly the fourteen reviewed RPCs');
 
 -- =====================================================================================
 -- owner / manager can assign and unassign; history is recorded once

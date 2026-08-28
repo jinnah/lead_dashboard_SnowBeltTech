@@ -22,6 +22,36 @@ function required(name: string, min: number): string {
   return v;
 }
 
+/**
+ * Canonical application base URL (server-only; NOT a secret). Used to build
+ * invitation redirects; browser-supplied Host/Origin/Referer values are never
+ * consulted. Must be a bare http(s) origin: no path, query, fragment,
+ * credentials or trailing slash.
+ */
+export const DEFAULT_APP_BASE_URL = "http://127.0.0.1:3000";
+
+export function isValidAppBaseUrl(value: string): boolean {
+  if (value !== value.trim() || value === "" || value.endsWith("/")) return false;
+  let u: URL;
+  try {
+    u = new URL(value);
+  } catch {
+    return false;
+  }
+  return (
+    (u.protocol === "http:" || u.protocol === "https:")
+    && u.username === "" && u.password === ""
+    && u.pathname === "/" && u.search === "" && u.hash === ""
+    && u.origin === value
+  );
+}
+
+export function getAppBaseUrl(): string {
+  const configured = process.env.APP_BASE_URL ?? DEFAULT_APP_BASE_URL;
+  if (!isValidAppBaseUrl(configured)) throw new ConfigError("APP_BASE_URL must be a bare http(s) origin");
+  return configured;
+}
+
 export function getServerEnv(): ServerEnv {
   const supabaseUrl = required("SUPABASE_URL", 8);
   let parsed: URL;
