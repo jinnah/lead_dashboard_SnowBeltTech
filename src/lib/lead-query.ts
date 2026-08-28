@@ -15,7 +15,16 @@ export const PAGE_SIZE = 50;
 export const SEARCH_MAX_LENGTH = 120;
 export const EXPORT_MAX_ROWS = 25_000;
 export const EXPORT_BATCH_SIZE = 1_000;
-export const PAGE_MAX = 99_999;
+/**
+ * The deliberate offset cap of public.search_leads (deep offset pagination is
+ * bounded in the database on purpose). The application must never accept a
+ * page whose offset exceeds it, so PAGE_MAX is DERIVED from this value - the
+ * two bounds cannot drift apart (see lead-query.test.ts, which also pins this
+ * constant to the migration's clamp).
+ */
+export const SEARCH_MAX_OFFSET = 1_000_000;
+/** Highest accepted page: its offset is exactly SEARCH_MAX_OFFSET (20,001 at 50/page). */
+export const PAGE_MAX = Math.floor(SEARCH_MAX_OFFSET / PAGE_SIZE) + 1;
 
 export const LEAD_SORTS = ["newest", "oldest"] as const;
 export type LeadSort = (typeof LEAD_SORTS)[number];
@@ -39,7 +48,8 @@ export function parseSort(value: Param): LeadSort {
 }
 
 /**
- * Page number: a plain positive integer up to PAGE_MAX. Invalid, duplicated,
+ * Page number: a plain positive integer up to PAGE_MAX (whose offset never
+ * exceeds the database's SEARCH_MAX_OFFSET clamp). Invalid, duplicated,
  * negative, fractional, oversized or nonnumeric values fall back to page 1.
  */
 export function parsePage(value: Param): number {

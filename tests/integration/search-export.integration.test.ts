@@ -251,11 +251,29 @@ describe("search and database-side pagination", () => {
   });
   it("10-11: invalid page/sort/search and PostgREST metacharacters are handled safely", async () => {
     const owner = await login(OWNER_EMAIL);
-    for (const p of ["0", "-1", "1.5", "abc", "99999", "2&page=3"]) {
-      const r = await owner.get(`/dashboard?page=${encodeURIComponent(p)}`);
+    // out-of-bound and invalid pages resolve to EXACTLY page 1 (same rows, same
+    // range, page-1 pagination) and never echo the requested page number
+    const pageOne = await owner.get(`/dashboard?q=${encodeURIComponent("Echo Contact")}`);
+    expect(pageOne.text).toContain("Showing 1–50 of 130 matching");
+    expect(pageOne.text).toContain("Page 1 of 3");
+    const pageOneRows = unique(leadNumbers(pageOne.text));
+    for (const p of ["99999", "20002", "0", "-1", "1.5", "abc", "2&page=3"]) {
+      const r = await owner.get(`/dashboard?q=${encodeURIComponent("Echo Contact")}&page=${encodeURIComponent(p)}`);
       expect(r.status, p).toBe(200);
-      expect(leadNumbers(r.text).length, p).toBeGreaterThan(0); // safe fallback, still page content
+      expect(unique(leadNumbers(r.text)), p).toEqual(pageOneRows); // the exact page-1 slice
+      expect(r.text, p).toContain("Showing 1–50 of 130 matching"); // page 1's range
+      expect(r.text, p).toContain("Page 1 of 3");
+      // visible/derived output only: Next's RSC payload scripts legitimately
+      // echo the request's own URL, so strip scripts before asserting
+      const visible = r.text.replace(/<script[\s\S]*?<\/script>/g, "");
+      for (const echo of ["page=99999", "page=20002", "Page 99999", "Page 20002"]) expect(visible, `${p} -> ${echo}`).not.toContain(echo);
     }
+    // the maximum aligned page (offset = the RPC's 1,000,000 clamp) is accepted
+    // by the parser; with this fixture it is simply out of range -> page 1
+    const maxPage = await owner.get(`/dashboard?q=${encodeURIComponent("Echo Contact")}&page=20001`);
+    expect(maxPage.status).toBe(200);
+    expect(maxPage.text).toContain("Showing 1–50 of 130 matching");
+    expect(maxPage.text).toContain("Page 1 of 3");
     expect((await owner.get("/dashboard?sort=created_at.desc;drop")).status).toBe(200);
     expect((await owner.get(`/dashboard?q=${encodeURIComponent("x".repeat(400))}`)).status).toBe(200);
     for (const q of ["%", "_", "\\", "*", "or(status.eq.new)", "');drop table leads;--", 'q",eq.x)']) {

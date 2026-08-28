@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { BusinessRow, MemberOption } from "./access";
 import {
@@ -6,11 +8,13 @@ import {
   findAuthorizedBusiness,
   leadQueryParams,
   normalizeSearch,
+  PAGE_MAX,
   PAGE_SIZE,
   parseLeadQuery,
   parsePage,
   parseSort,
   SEARCH_MAX_LENGTH,
+  SEARCH_MAX_OFFSET,
   searchLeadArgs,
 } from "./lead-query";
 
@@ -48,13 +52,23 @@ describe("parseSort and parsePage", () => {
       expect(parseSort(bad as never), String(bad)).toBe("newest");
     }
   });
-  it("accepts only plain bounded positive integers as pages", () => {
+  it("accepts only plain positive integers whose offset stays inside the database clamp", () => {
     expect(parsePage("1")).toBe(1);
     expect(parsePage("3")).toBe(3);
-    expect(parsePage("99999")).toBe(99999);
-    for (const bad of ["0", "-1", "1.5", "  2", "2 ", "+2", "1e3", "abc", "100000", "999999999999", "", undefined, null, ["2", "3"]]) {
+    expect(parsePage(String(PAGE_MAX))).toBe(20001); // offset exactly SEARCH_MAX_OFFSET
+    for (const bad of ["20002", "99999", "0", "-1", "1.5", "  2", "2 ", "+2", "1e3", "abc", "100000", "999999999999", "", undefined, null, ["2", "3"]]) {
       expect(parsePage(bad as never), String(bad)).toBe(1);
     }
+  });
+  it("keeps the page bound and the database offset clamp aligned - they cannot drift", () => {
+    expect(SEARCH_MAX_OFFSET).toBe(1_000_000);
+    expect(PAGE_MAX).toBe(Math.floor(SEARCH_MAX_OFFSET / PAGE_SIZE) + 1);
+    expect(PAGE_MAX).toBe(20001);
+    expect((PAGE_MAX - 1) * PAGE_SIZE).toBeLessThanOrEqual(SEARCH_MAX_OFFSET); // max valid page never exceeds the clamp
+    expect(PAGE_MAX * PAGE_SIZE).toBeGreaterThan(SEARCH_MAX_OFFSET); // the first rejected page would
+    // and the constant is pinned to the actual migration, so a future SQL edit breaks this test
+    const migration = readFileSync(path.resolve(__dirname, "../../supabase/migrations/20260821190000_lead_search.sql"), "utf8");
+    expect(migration).toContain(`least(greatest(coalesce(p_offset, 0), 0), ${SEARCH_MAX_OFFSET})`);
   });
 });
 
