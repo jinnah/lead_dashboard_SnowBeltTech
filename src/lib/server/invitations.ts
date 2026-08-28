@@ -10,9 +10,14 @@ import type { Viewer } from "./viewer";
 // cannot share one transaction, so every step fails CLOSED:
 //   prepare (admin session RPC)  ->  Auth invite (service key, email out)
 //     -> mark sent (admin session RPC)
-//   Auth failure                 ->  mark failed (no usable invitation remains)
-//   finalize failure             ->  revoke first, then delete the new
-//                                    still-unaccepted Auth account
+//   Auth failure                 ->  mark failed; the RPC positively identifies
+//                                    the Auth account this attempt created (or
+//                                    NULL) and that exact account is deleted,
+//                                    so the email is immediately reinvitable
+//   finalize failure             ->  revoke first, then delete the exact Auth
+//                                    user id returned by THIS invite call —
+//                                    attempted even when revocation itself
+//                                    fails (email re-verified before deletion)
 // Nothing here logs or returns emails, names, tokens, links or Auth errors.
 
 export type InviteOutcome = "invited" | "invite_delivery_failed" | AdminResultError;
@@ -41,8 +46,16 @@ export async function inviteCustomerMember(
 
   const invited = await inviteAuthUser(email, getAppBaseUrl());
   if (!invited.ok) {
-    const failed = await supabase.rpc("admin_mark_customer_invitation_failed", { p_invitation_id: invitationId }).single();
-    logEvent({ requestId, event: "invite_member", step: "auth_invite", category: invited.category, compensated: !failed.error });
+    // Mark failed FIRST (acceptance becomes impossible), then remove the Auth
+    // account this attempt created, if the database positively identified one.
+    const failed = await supabase
+      .rpc("admin_mark_customer_invitation_failed", { p_invitation_id: invitationId })
+      .single<{ invitation_id: string; status: string; cleanup_auth_user_id: string | null }>();
+    let cleaned: boolean | null = null;
+    if (!failed.error && failed.data?.cleanup_auth_user_id) {
+      cleaned = await deleteUnacceptedAuthUser(failed.data.cleanup_auth_user_id, email);
+    }
+    logEvent({ requestId, event: "invite_member", step: "auth_invite", category: invited.category, compensated: !failed.error, cleaned });
     return invited.category === "email_exists" ? "email_in_use" : "invite_delivery_failed";
   }
 
@@ -50,10 +63,14 @@ export async function inviteCustomerMember(
     .rpc("admin_mark_customer_invitation_sent", { p_invitation_id: invitationId, p_auth_user_id: invited.userId })
     .single<{ invitation_id: string; status: string }>();
   if (sent.error || !sent.data) {
-    // Fail closed: kill the invitation FIRST, then remove the Auth account this
-    // call just created (still unaccepted; email re-verified inside the deleter).
+    // Fail closed: kill the invitation FIRST, then remove the exact Auth account
+    // THIS call created. Cleanup runs even when the revocation response itself
+    // fails or is ambiguous — the deleter re-verifies the normalized email, and
+    // if mark-sent actually committed, deleting the account still fails closed:
+    // the delivered link becomes unusable, no profile or membership can appear,
+    // and the stranded sent invitation stays revocable by the administrator.
     const revoked = await supabase.rpc("admin_revoke_customer_invitation", { p_business_id: businessId, p_invitation_id: invitationId }).single();
-    const cleaned = revoked.error ? false : await deleteUnacceptedAuthUser(invited.userId, email);
+    const cleaned = await deleteUnacceptedAuthUser(invited.userId, email);
     logEvent({ requestId, event: "invite_member", step: "finalize", category: "failed", sqlstate: sent.error?.code ?? null, revoked: !revoked.error, cleaned });
     return "failed";
   }

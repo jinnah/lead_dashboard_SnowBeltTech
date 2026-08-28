@@ -345,7 +345,7 @@ describe("revocation, failure compensation and hardening", () => {
     expect((await admin.post(`/api/admin/businesses/${id}/actions`, { action: "revoke_invitation", invitation_id: invId! })).location).toMatch(/ok=invitation_revoked$/);
     expect(sql(`select count(*) from public.customer_access_events where invitation_id = '${invId}' and event_type = 'invitation_revoked'`)).toBe("1");
   });
-  it("22: a controlled delivery failure marks the invitation failed and leaves nothing usable", async () => {
+  it("22: a controlled delivery failure compensates fully - the same email is reinvitable with NO privileged cleanup", async () => {
     const admin = await login("platform-admin@example.invalid");
     const id = bizId();
     const stop = spawnSync("docker", ["stop", MAIL_CONTAINER], { encoding: "utf8" });
@@ -358,14 +358,57 @@ describe("revocation, failure compensation and hardening", () => {
       const start = spawnSync("docker", ["start", MAIL_CONTAINER], { encoding: "utf8" });
       expect(start.status).toBe(0);
     }
+    // application-level compensation only from here on: NO privileged SQL cleanup
     expect(invitation(FAILED_EMAIL).split("|")[1]).toBe("failed");
     expect(membership(FAILED_EMAIL)).toBe("");
+    expect(sql(`select count(*) from public.profiles p join auth.users u on u.id = p.id where lower(u.email) = '${FAILED_EMAIL}'`)).toBe("0");
+    expect(authUsers(FAILED_EMAIL)).toBe(0); // rolled back by Auth, or removed by the coordinator's bounded cleanup
     expect(sql(`select count(*) from public.customer_access_events where event_type = 'invitation_failed' and business_id = '${id}'`)).toBe("1");
-    sql(`delete from auth.users where lower(email) = '${FAILED_EMAIL}'`); // remove any orphan GoTrue account from the aborted delivery
-    // a fresh invitation for the same email works again after the failure
+    // the same email is immediately reinvitable through the application alone
     expect((await invite(admin, id, FAILED_EMAIL, "Juliet Failed", "BUSINESS_STAFF")).location).toMatch(/ok=invited$/);
+    expect(invitation(FAILED_EMAIL).split("|")[1]).toBe("sent");
+    const link = await invitationLink(FAILED_EMAIL); // the new email really arrived through the catcher
+    expect(link).toContain("/auth/confirm?token_hash=");
     const [inv2] = invitation(FAILED_EMAIL).split("|");
     expect((await admin.post(`/api/admin/businesses/${id}/actions`, { action: "revoke_invitation", invitation_id: inv2! })).location).toMatch(/ok=invitation_revoked$/);
+    expect(authUsers(FAILED_EMAIL)).toBe(0); // revocation cleanup, as before
+  });
+  it("archived businesses reject membership administration at every boundary", async () => {
+    const admin = await login("platform-admin@example.invalid");
+    const id = bizId();
+    const memberState = () => sql(`select string_agg(m.role || '/' || m.status, ',' order by m.created_at) from public.business_memberships m where m.business_id = '${id}'`);
+    const before = memberState();
+    const eventsBefore = accessEvents(id);
+    sql(`update public.businesses set status = 'archived' where id = '${id}'`); // fixture only
+    try {
+      // real HTTP route with crafted valid forms (the UI hides these controls)
+      const role = await admin.post(`/api/admin/businesses/${id}/actions`, { action: "set_member_role", user_id: userId(STAFF_EMAIL), role: "BUSINESS_MANAGER" });
+      expect(role.location).toMatch(/err=not_operable$/);
+      const status = await admin.post(`/api/admin/businesses/${id}/actions`, { action: "set_member_status", user_id: userId(STAFF_EMAIL), status: "inactive" });
+      expect(status.location).toMatch(/err=not_operable$/);
+      // direct RPC calls under the administrator's real anon-key session
+      const sb = createClient(SUPABASE_URL, ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+      expect((await sb.auth.signInWithPassword({ email: "platform-admin@example.invalid", password: PASSWORD })).error).toBeNull();
+      try {
+        const r1 = await sb.rpc("admin_set_business_member_role", { p_business_id: id, p_user_id: userId(STAFF_EMAIL), p_role: "BUSINESS_MANAGER" });
+        expect(r1.error?.code).toBe("55000");
+        const r2 = await sb.rpc("admin_set_business_member_status", { p_business_id: id, p_user_id: userId(STAFF_EMAIL), p_status: "inactive" });
+        expect(r2.error?.code).toBe("55000");
+      } finally {
+        await sb.auth.signOut({ scope: "local" });
+      }
+      expect(memberState()).toBe(before);
+      expect(accessEvents(id)).toBe(eventsBefore);
+      // the archived detail page stays read-only for memberships
+      const page = await admin.get(`/admin/businesses/${id}`);
+      expect(page.status).toBe(200);
+      expect(page.text).not.toContain('value="set_member_role"');
+      expect(page.text).not.toContain('value="set_member_status"');
+      expect(page.text).not.toContain('value="invite_member"');
+    } finally {
+      sql(`update public.businesses set status = 'active' where id = '${id}'`);
+    }
+    expect(memberState()).toBe(before);
   });
   it("23-25: signup stays closed and malformed administrator requests are rejected safely", async () => {
     const signup = await fetch(`${SUPABASE_URL}/auth/v1/signup`, {
