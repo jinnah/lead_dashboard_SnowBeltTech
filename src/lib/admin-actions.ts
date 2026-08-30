@@ -115,7 +115,7 @@ export type AdminActionError =
 /** Database outcomes mapped to allow-listed codes (never the SQL message). */
 export type AdminResultError = AdminActionError | "slug_taken" | "source_taken" | "not_found" | "not_operable" | "not_allowed" | "failed"
   | "email_in_use" | "invitation_exists" | "invite_delivery_failed" | "owner_required" | "last_owner" | "invalid_input"
-  | "self_forbidden" | "owner_protected";
+  | "self_forbidden" | "owner_protected" | "account_deactivated";
 export type AdminOk = "business_created" | "business_status_updated" | "source_created" | "source_status_updated"
   | "invited" | "invitation_revoked" | "member_role_updated" | "member_status_updated";
 
@@ -153,6 +153,7 @@ export const ADMIN_ERROR_MESSAGES: Record<AdminResultError, string> = {
   invalid_input: "The submitted details were rejected. Check the form and try again.",
   self_forbidden: "You cannot change your own access. Contact SnowBeltTech if your role needs to change.",
   owner_protected: "Owner access is managed by SnowBeltTech. Contact your account manager to change ownership.",
+  account_deactivated: "That account was deactivated by SnowBeltTech and is managed by SnowBeltTech. Contact your account manager.",
 };
 
 export const ADMIN_OK_MESSAGES: Record<AdminOk, string> = {
@@ -176,6 +177,7 @@ const VALIDATION_PREFIXES: ReadonlyArray<[string, AdminResultError]> = [
   ["unsupported customer role", "invalid_role"], ["unsupported membership status", "invalid_status"],
   ["first member must", "owner_required"], ["email already registered", "email_in_use"],
   ["own membership", "self_forbidden"], ["owner memberships", "owner_protected"],
+  ["account is deactivated", "account_deactivated"],
 ];
 
 /** Maps a Supabase/Postgres error from an admin RPC to an allow-listed result code (never the SQL text). */

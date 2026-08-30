@@ -49,6 +49,19 @@ describe("team action parsing", () => {
   });
 });
 
+describe("deactivated-account result mapping", () => {
+  it("maps the database's deactivated-profile rejection to the allow-listed account_deactivated result", async () => {
+    const { ADMIN_ERROR_MESSAGES, mapAdminRpcError } = await import("./admin-actions");
+    expect(mapAdminRpcError("22023", "account is deactivated and managed by SnowBeltTech", "set_member_status")).toBe("account_deactivated");
+    expect(mapAdminRpcError("22023", "account is deactivated and managed by SnowBeltTech", "set_member_role")).toBe("account_deactivated");
+    expect(mapAdminRpcError("22023", "own membership cannot be changed through team management", "set_member_role")).toBe("self_forbidden");
+    expect(mapAdminRpcError("22023", "owner memberships are managed by SnowBeltTech", "set_member_status")).toBe("owner_protected");
+    const msg = ADMIN_ERROR_MESSAGES.account_deactivated;
+    expect(msg).toContain("SnowBeltTech");
+    expect(msg).not.toMatch(/sql|22023|exception|errcode/i); // never raw SQL detail
+  });
+});
+
 describe("role display and team capability", () => {
   const profile: ProfileRow = { id: "u1", display_name: "U", platform_role: null, is_active: true };
   const businesses = [

@@ -99,7 +99,11 @@ export default async function TeamPage({ searchParams }: { searchParams: Promise
               {team.map((m) => {
                 const self = m.user_id === viewer.userId;
                 const owner = m.role === "BUSINESS_OWNER";
-                const manageable = !self && !owner;
+                // Membership status and PROFILE status are separate concepts:
+                // a profile deactivated by SnowBeltTech is platform-managed -
+                // the owner gets a distinct read-only state and no controls
+                // (the database rejects crafted requests independently).
+                const manageable = !self && !owner && m.profile_active;
                 const otherRole = m.role === "BUSINESS_MANAGER" ? "BUSINESS_STAFF" : "BUSINESS_MANAGER";
                 return (
                   <tr key={m.user_id}>
@@ -108,7 +112,7 @@ export default async function TeamPage({ searchParams }: { searchParams: Promise
                       {self ? <span className="muted"> (you)</span> : null}
                     </td>
                     <td>{roleLabel(m.role)}</td>
-                    <td>{m.status === "active" && m.profile_active ? "Active" : "Inactive"}</td>
+                    <td>{!m.profile_active ? "Account deactivated" : m.status === "active" ? "Active" : "Inactive"}</td>
                     <td>
                       {manageable ? (
                         <div className="team-actions">
@@ -142,7 +146,7 @@ export default async function TeamPage({ searchParams }: { searchParams: Promise
                           )}
                         </div>
                       ) : (
-                        <span className="muted">{owner ? "Managed by SnowBeltTech" : "—"}</span>
+                        <span className="muted">{owner || !m.profile_active ? "Managed by SnowBeltTech" : "—"}</span>
                       )}
                     </td>
                   </tr>

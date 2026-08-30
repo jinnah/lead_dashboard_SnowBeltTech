@@ -406,6 +406,78 @@ describe("owner team mutations", () => {
   });
 });
 
+describe("deactivated-profile targets (corrective)", () => {
+  // ONE member's rendered row: script payloads stripped, bounded at </tr> so
+  // no other row or serialized text can satisfy an assertion accidentally.
+  const row = (html: string, name: string) => {
+    const clean = html.replace(/<script[\s\S]*?<\/script>/g, "");
+    const seg = clean.split("<tr>").find((s) => s.includes(name)) ?? "";
+    return seg.split("</tr>")[0] ?? "";
+  };
+  it("a SnowBeltTech-deactivated profile is read-only for the owner in UI and at the endpoint; admins keep authority", async () => {
+    const owner = await login(OWNER_EMAIL);
+    const act = (form: Record<string, string>) => owner.post("/api/team/actions", { business: T1_SLUG, ...form });
+    const auditCount = () => Number(sql(`select count(*) from public.customer_access_events where target_user_id = '${U_STAFF}' and event_type in ('membership_role_changed','membership_status_changed')`));
+
+    // state 1 (member-specific): active profile + active membership
+    let page = await owner.get(`/dashboard/team?business=${T1_SLUG}`);
+    let staffRow = row(page.text, "Tango Staff (synthetic)");
+    expect(staffRow).toContain(">Active<");
+    expect(staffRow).toContain("Change role to Manager");
+    expect(staffRow).toContain("Deactivate access");
+    expect(staffRow).not.toContain("Account deactivated");
+
+    // state 2 (member-specific): active profile + inactive membership
+    expect((await act({ action: "set_member_status", user_id: U_STAFF, status: "inactive" })).location).toMatch(/ok=member_status_updated$/);
+    page = await owner.get(`/dashboard/team?business=${T1_SLUG}`);
+    staffRow = row(page.text, "Tango Staff (synthetic)");
+    expect(staffRow).toContain(">Inactive<");
+    expect(staffRow).toContain("Reactivate access");
+    expect(staffRow).not.toContain("Deactivate access");
+    expect(staffRow).not.toContain("Account deactivated");
+    expect((await act({ action: "set_member_status", user_id: U_STAFF, status: "active" })).location).toMatch(/ok=member_status_updated$/);
+
+    // state 3: SnowBeltTech deactivates the PROFILE (platform-level fixture)
+    sql(`update public.profiles set is_active = false where id = '${U_STAFF}'`);
+    try {
+      page = await owner.get(`/dashboard/team?business=${T1_SLUG}`);
+      staffRow = row(page.text, "Tango Staff (synthetic)");
+      expect(staffRow).toContain("Account deactivated");
+      expect(staffRow).toContain("Managed by SnowBeltTech");
+      for (const control of ["Change role", "Deactivate access", "Reactivate access", `value="${U_STAFF}"`]) {
+        expect(staffRow, control).not.toContain(control);
+      }
+      // other rows keep their controls (the assertions above are member-specific)
+      const managerRow = row(page.text, "Tango Manager (synthetic)");
+      expect(managerRow).toContain(">Active<");
+      expect(managerRow).toContain("Deactivate access");
+
+      // crafted owner requests are rejected by the DATABASE with the allow-listed result
+      const before = auditCount();
+      expect((await act({ action: "set_member_role", user_id: U_STAFF, role: "BUSINESS_MANAGER" })).location).toMatch(/err=account_deactivated$/);
+      expect((await act({ action: "set_member_status", user_id: U_STAFF, status: "inactive" })).location).toMatch(/err=account_deactivated$/);
+      expect((await act({ action: "set_member_status", user_id: U_STAFF, status: "active" })).location).toMatch(/err=account_deactivated$/);
+      expect(membership(BIZ_T1, U_STAFF)).toBe("BUSINESS_STAFF|active"); // unchanged
+      expect(auditCount()).toBe(before); // no audit row
+      // foreign and unknown identifiers stay opaque - the new state leaks nothing
+      expect((await act({ action: "set_member_status", user_id: "00000000-0000-4000-8000-00000000dead", status: "inactive" })).location).toMatch(/err=not_found$/);
+      expect((await act({ action: "set_member_status", user_id: U_T2OWNER, status: "inactive" })).location).toMatch(/err=not_found$/);
+      // the platform administrator retains membership authority over the same target
+      const admin = await login("platform-admin@example.invalid");
+      const adminAct = await admin.post(`/api/admin/businesses/${BIZ_T1}/actions`, { action: "set_member_status", user_id: U_STAFF, status: "inactive" });
+      expect(adminAct.location).toMatch(/ok=member_status_updated$/);
+      const adminBack = await admin.post(`/api/admin/businesses/${BIZ_T1}/actions`, { action: "set_member_status", user_id: U_STAFF, status: "active" });
+      expect(adminBack.location).toMatch(/ok=member_status_updated$/);
+    } finally {
+      sql(`update public.profiles set is_active = true where id = '${U_STAFF}'`);
+    }
+    // regression: with the profile active again the owner manages the member as approved
+    expect((await act({ action: "set_member_role", user_id: U_STAFF, role: "BUSINESS_MANAGER" })).location).toMatch(/ok=member_role_updated$/);
+    expect((await act({ action: "set_member_role", user_id: U_STAFF, role: "BUSINESS_STAFF" })).location).toMatch(/ok=member_role_updated$/);
+    expect(membership(BIZ_T1, U_STAFF)).toBe("BUSINESS_STAFF|active");
+  });
+});
+
 describe("logs and bundles", () => {
   it("no email, name, token, JWT, cookie or secret in server logs; no privileged module in browser assets", async () => {
     const log = serverLog.join("");
