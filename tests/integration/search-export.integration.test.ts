@@ -431,6 +431,51 @@ describe("CSV export", () => {
   });
 });
 
+describe("lead workflow discoverability (UAT)", () => {
+  const ORDER = ["New", "Contacted", "Qualified", "Scheduled", "Won", "Lost", "Spam"];
+  const statusSelect = (html: string) => /<select[^>]*name="status"[\s\S]*?<\/select>/.exec(html)?.[0] ?? "";
+  it("filters are labelled as filters, guidance is role-aware, and every lead exposes a View / update action", async () => {
+    const owner = await login(OWNER_EMAIL);
+    const dash = await owner.get("/dashboard");
+    for (const label of ["Filter by status", "Filter by source", "Filter by assignment"]) expect(dash.text).toContain(label);
+    for (const old of ['field__label">Status<', 'field__label">Source<', 'field__label">Assignment<']) expect(dash.text, old).not.toContain(old);
+    expect(dash.text).toContain("The dropdowns above only filter this list. Open a lead to update its status, assignment, follow-up, or notes.");
+    // every displayed lead carries the action (the one link renders in the table AND the mobile card)
+    const labels = dash.text.match(/aria-label="View or update lead INQ-2026-\d{4}"/g) ?? [];
+    expect(labels.length).toBe(100); // 50 leads x 2 renderings
+    expect(new Set(labels).size).toBe(50); // each named for its specific lead
+    expect(dash.text).toMatch(/<a class="lead-open" href="\/dashboard\/leads\/[0-9a-f-]{36}" aria-label="View or update lead INQ-2026-\d{4}">/);
+    // staff guidance omits assignment (owner/manager capability) - nothing else differs
+    const staff = await login(STAFF_EMAIL);
+    const staffDash = await staff.get("/dashboard");
+    expect(staffDash.text).toContain("Open a lead to update its status, follow-up, or notes.");
+    expect(staffDash.text).not.toContain("its status, assignment");
+    expect(staffDash.text).toContain("View / update"); // opening leads is not role-gated
+    // the filter select renders the seven canonical statuses exactly once, in order
+    const filter = statusSelect(dash.text);
+    expect((filter.match(/<option/g) ?? []).length).toBe(8); // "All statuses" + 7
+    for (const s of ORDER) expect(filter.split(`>${s}<`).length - 1, s).toBe(1);
+    const idxs = ORDER.map((s) => filter.indexOf(`>${s}<`));
+    expect(idxs.every((v, i) => v > (i === 0 ? -1 : idxs[i - 1]!))).toBe(true);
+    // detail page: the audited mutation control is plainly an action, with the same seven options
+    const leadId = sql(`select id::text from public.leads where business_id = '${BIZ_E1}' and lead_number = 'INQ-2026-1209'`);
+    const detail = await owner.get(`/dashboard/leads/${leadId}`);
+    expect(detail.status).toBe(200);
+    expect(detail.text).toContain("Work this lead");
+    expect(detail.text).toContain("Set status");
+    expect(detail.text).toContain(">Update status<");
+    const detailSelect = statusSelect(detail.text);
+    expect((detailSelect.match(/<option/g) ?? []).length).toBe(7);
+    for (const s of ORDER) expect(detailSelect.split(`>${s}<`).length - 1, s).toBe(1);
+    // administrator surfaces are untouched by this pass
+    const admin = await login("platform-admin@example.invalid");
+    const adminPage = await admin.get("/admin");
+    expect(adminPage.status).toBe(200);
+    expect(adminPage.text).not.toContain("View / update");
+    expect(adminPage.text).not.toContain("Filter by status");
+  });
+});
+
 describe("logs, bundles and regressions", () => {
   it("35: no PII, search text, exported content, cookie, JWT or secret reaches server logs", async () => {
     const log = serverLog.join("");
@@ -466,5 +511,9 @@ describe("logs, bundles and regressions", () => {
     const move = await owner.post(`/api/leads/${leadId}/actions`, { action: "set_status", status: "contacted" });
     expect(move.location).toMatch(/ok=set_status$/);
     expect(sql(`select status from public.leads where id = '${leadId}'`)).toBe("contacted");
+    // the audited history row exists and the dashboard reflects the new status
+    expect(sql(`select count(*) from public.lead_activities where lead_id = '${leadId}' and activity_type = 'status_changed'`)).toBe("1");
+    const dash = await owner.get(`/dashboard?q=${encodeURIComponent("Deep Window")}`);
+    expect(dash.text).toContain("badge--contacted");
   });
 });

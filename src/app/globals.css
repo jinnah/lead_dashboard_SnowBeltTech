@@ -121,6 +121,12 @@ table.leads th { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 
 table.leads tr:last-child td { border-bottom: none; }
 table.leads a { font-weight: 600; color: var(--navy-700); text-decoration: none; }
 table.leads a:hover { text-decoration: underline; }
+/* One semantic lead link: number + always-underlined action phrase (the action
+   is recognizable by its text and underline, never by color alone). */
+.lead-open { display: inline-flex; flex-direction: column; gap: 0.1rem; }
+.lead-open__hint { font-size: 0.78rem; font-weight: 400; color: var(--ice-600); text-decoration: underline; white-space: nowrap; }
+.lead-open:hover .lead-open__hint { color: var(--navy-700); }
+.lead-open:focus-visible { outline: 2px solid var(--ice-600); outline-offset: 2px; border-radius: 4px; }
 .lead-cards { display: none; }
 @media (max-width: 760px) {
   .table-wrap { display: none; }

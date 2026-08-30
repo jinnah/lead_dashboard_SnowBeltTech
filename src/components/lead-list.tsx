@@ -25,6 +25,7 @@ export function LeadList({
   linkBase,
   showBusiness = false,
   emptyText,
+  actionLabel,
 }: {
   leads: LeadListRow[];
   timeZoneFor: (lead: LeadListRow) => string;
@@ -33,6 +34,12 @@ export function LeadList({
   linkBase: string | null;
   showBusiness?: boolean;
   emptyText: string;
+  /**
+   * Visible action phrase (e.g. "View / update") rendered inside the SAME
+   * lead link so the primary action is discoverable at the left edge of the
+   * table. Omitted on administrator surfaces, which keep the plain link.
+   */
+  actionLabel?: string;
 }) {
   if (leads.length === 0) {
     return (
@@ -41,7 +48,21 @@ export function LeadList({
       </div>
     );
   }
-  const num = (l: LeadListRow) => (linkBase ? <a href={`${linkBase}/${l.id}`}>{l.lead_number}</a> : <strong>{l.lead_number}</strong>);
+  // ONE semantic link per lead cell: number + action phrase, named for the
+  // specific lead so assistive tech announces exactly what it opens.
+  const num = (l: LeadListRow) =>
+    linkBase ? (
+      actionLabel ? (
+        <a className="lead-open" href={`${linkBase}/${l.id}`} aria-label={`View or update lead ${l.lead_number}`}>
+          <strong>{l.lead_number}</strong>
+          <span className="lead-open__hint" aria-hidden="true">{actionLabel}</span>
+        </a>
+      ) : (
+        <a href={`${linkBase}/${l.id}`}>{l.lead_number}</a>
+      )
+    ) : (
+      <strong>{l.lead_number}</strong>
+    );
   const assignee = (l: LeadListRow) => (l.assigned_to ? assigneeName(l.assigned_to) : <span className="muted">Unassigned</span>);
   return (
     <>

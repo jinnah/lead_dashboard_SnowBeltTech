@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { LeadList } from "@/components/lead-list";
-import { canExportLeads, LEAD_SOURCES, LEAD_STATUSES, selectBusiness } from "@/lib/access";
+import { canAssign, canExportLeads, LEAD_SOURCES, LEAD_STATUSES, selectBusiness } from "@/lib/access";
 import { leadQueryParams, parseLeadQuery, parsePage, PAGE_SIZE, SEARCH_MAX_LENGTH } from "@/lib/lead-query";
 import { SOURCE_LABELS, STATUS_LABELS } from "@/lib/format";
 import { fetchLeadPage } from "@/lib/server/lead-search";
@@ -109,21 +109,21 @@ export default async function DashboardPage({
             />
           </label>
           <label className="field">
-            <span className="field__label">Status</span>
+            <span className="field__label">Filter by status</span>
             <select className="field__input" name="status" defaultValue={query.status ?? ""}>
               <option value="">All statuses</option>
               {LEAD_STATUSES.map((s) => <option key={s} value={s}>{STATUS_LABELS[s]}</option>)}
             </select>
           </label>
           <label className="field">
-            <span className="field__label">Source</span>
+            <span className="field__label">Filter by source</span>
             <select className="field__input" name="source" defaultValue={query.source ?? ""}>
               <option value="">All sources</option>
               {LEAD_SOURCES.map((s) => <option key={s} value={s}>{SOURCE_LABELS[s]}</option>)}
             </select>
           </label>
           <label className="field">
-            <span className="field__label">Assignment</span>
+            <span className="field__label">Filter by assignment</span>
             <select className="field__input" name="assignment" defaultValue={assignmentValue}>
               <option value="">All leads</option>
               <option value="mine">My leads</option>
@@ -146,6 +146,11 @@ export default async function DashboardPage({
             <a className="btn btn--link" href={`/api/leads/export?${leadQueryParams(business, query)}`}>Export CSV</a>
           ) : null}
         </form>
+        <p className="muted">
+          {canAssign(viewer.access, business.id)
+            ? "The dropdowns above only filter this list. Open a lead to update its status, assignment, follow-up, or notes."
+            : "The dropdowns above only filter this list. Open a lead to update its status, follow-up, or notes."}
+        </p>
         <p className="muted" aria-live="polite">
           {matching === 0 ? "Showing 0 leads" : `Showing ${rangeStart}–${rangeEnd} of ${matching} matching ${matching === 1 ? "lead" : "leads"}`}
         </p>
@@ -154,6 +159,7 @@ export default async function DashboardPage({
           timeZoneFor={() => business.timezone}
           assigneeName={(id) => (id ? members.names.get(id) ?? FORMER_MEMBER : "Unassigned")}
           linkBase="/dashboard/leads"
+          actionLabel="View / update"
           emptyText={
             businessHasLeads
               ? "No leads match the current search and filters."

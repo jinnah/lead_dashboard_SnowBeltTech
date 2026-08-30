@@ -22,7 +22,7 @@ export function StatusForm({ action, current, options }: { action: string; curre
     >
       <input type="hidden" name="action" value="set_status" />
       <label className="field">
-        <span className="field__label">Status</span>
+        <span className="field__label">Set status</span>
         <select className="field__input" name="status" value={value} onChange={(e) => setValue(e.target.value)}>
           {options.map((o) => (
             <option key={o.value} value={o.value}>{o.label}</option>
