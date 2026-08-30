@@ -57,7 +57,8 @@ describe("privileged module isolation", () => {
     ]);
     const allowedCoordinatorImporters = new Set([
       "src/lib/server/invitations.ts",
-      "src/app/api/admin/businesses/[id]/actions/route.ts", // reviewed invitation route
+      "src/app/api/admin/businesses/[id]/actions/route.ts", // reviewed administrator invitation route
+      "src/app/api/team/actions/route.ts", // reviewed customer-owner team route (same coordinator, owner-authorized)
     ]);
     for (const file of walk(src).filter((f) => /\.(ts|tsx)$/.test(f) && !f.endsWith(".test.ts"))) {
       const text = readFileSync(file, "utf8");
@@ -93,6 +94,19 @@ describe("privileged module isolation", () => {
       expect(text, rel).not.toMatch(/\.or\(/);
       expect(text, rel).not.toMatch(/\.ilike\(/);
     }
+  });
+  it("customer team surfaces never touch the service-role client or Auth Admin directly", () => {
+    for (const rel of ["src/app/dashboard/team/page.tsx", "src/lib/team-actions.ts", "src/components/app-shell.tsx", "src/components/confirm-form.tsx"]) {
+      const text = readFileSync(path.join(root, rel), "utf8");
+      for (const forbidden of ["supabase-admin", "supabase-auth-admin", "server/invitations", "SUPABASE_SERVICE_ROLE_KEY", "N8N_INGEST_TOKEN", "inviteUserByEmail", "portal_invitation_id"]) {
+        expect(text.includes(forbidden), `${rel} references ${forbidden}`).toBe(false);
+      }
+    }
+    // the team route reaches Auth Admin ONLY through the shared coordinator
+    const route = readFileSync(path.join(root, "src/app/api/team/actions/route.ts"), "utf8");
+    expect(route.includes("supabase-auth-admin")).toBe(false);
+    expect(route.includes("supabase-admin")).toBe(false);
+    expect(route.includes("server/invitations")).toBe(true);
   });
   it("recovery surfaces never touch the service-role client, Auth Admin or the invitation coordinator", () => {
     const recoverySurfaces = [

@@ -66,6 +66,33 @@ export function canExportLeads(access: Access, businessId: string): boolean {
   return canAssign(access, businessId);
 }
 
+/**
+ * Team & access administration: ONLY an active BUSINESS_OWNER of that business.
+ * Managers run daily lead operations but never administer membership; the
+ * server routes and the database RPCs re-enforce this independently.
+ */
+export function canManageTeam(access: Access, businessId: string): boolean {
+  return access.kind === "customer" && access.roles[businessId] === "BUSINESS_OWNER";
+}
+
+/** Customer-facing labels for the canonical internal role values. */
+export const ROLE_DISPLAY_LABELS: Record<BusinessRole, string> = {
+  BUSINESS_OWNER: "Owner",
+  BUSINESS_MANAGER: "Manager",
+  BUSINESS_STAFF: "Staff",
+};
+
+/**
+ * The viewer's effective, server-authorized role label for ONE selected
+ * business (derived exclusively from the RLS-visible active membership -
+ * never from browser input). Falls back to the generic label only when no
+ * membership role is known for that business.
+ */
+export function customerRoleLabel(access: Access, businessId: string): string {
+  const role = access.kind === "customer" ? access.roles[businessId] : undefined;
+  return role ? ROLE_DISPLAY_LABELS[role] : "Customer";
+}
+
 /** Chooses the business to display: a requested slug is honoured only if it is in the authorized list. */
 export function selectBusiness(businesses: BusinessRow[], requestedSlug: string | null | undefined): BusinessRow | null {
   if (businesses.length === 0) return null;

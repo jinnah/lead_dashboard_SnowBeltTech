@@ -56,6 +56,37 @@ interface MembershipWithProfile {
   profiles: { display_name: string; is_active: boolean } | null;
 }
 
+export interface TeamMemberRow {
+  user_id: string;
+  role: string;
+  status: string;
+  display_name: string;
+  profile_active: boolean;
+}
+
+/**
+ * Every membership of ONE business (active and inactive) through the viewer's
+ * RLS session, for the owner-facing Team & access page. Contains no emails -
+ * profiles carry display names only; invitation emails come from the
+ * invitations table under its own owner-scoped policy.
+ */
+export async function loadTeam(viewer: Viewer, businessId: string): Promise<TeamMemberRow[]> {
+  const { data } = await viewer.supabase
+    .from("business_memberships")
+    .select("user_id, role, status, profiles(display_name, is_active)")
+    .eq("business_id", businessId)
+    .returns<MembershipWithProfile[]>();
+  const rows = (data ?? []).map((m) => ({
+    user_id: m.user_id,
+    role: m.role,
+    status: m.status,
+    display_name: m.profiles?.display_name?.trim() || "Team member",
+    profile_active: m.profiles?.is_active === true,
+  }));
+  rows.sort((a, b) => a.display_name.localeCompare(b.display_name));
+  return rows;
+}
+
 /**
  * Members of one business as visible through the viewer's RLS session.
  * `active` = assignable (active membership + active profile); `names` maps every

@@ -55,6 +55,11 @@ p { margin: 0 0 0.75rem; }
 .brand__mark { width: 30px; height: 30px; border-radius: 8px; background: linear-gradient(135deg, var(--ice-600), var(--ice-300)); display: inline-block; }
 .brand__sub { font-weight: 400; color: var(--ice-300); font-size: 0.85rem; }
 .shell-user { display: flex; align-items: center; gap: 0.75rem; font-size: 0.9rem; color: var(--ice-100); flex-wrap: wrap; }
+.shell-nav { display: flex; align-items: center; gap: 1rem; margin-left: 1.5rem; margin-right: auto; flex-wrap: wrap; }
+.shell-nav a { color: var(--ice-100); font-size: 0.92rem; text-decoration: none; border-bottom: 2px solid transparent; padding-bottom: 2px; }
+.shell-nav a:hover { text-decoration: none; border-bottom-color: var(--ice-300); }
+.shell-nav a[aria-current="page"] { font-weight: 600; border-bottom-color: var(--ice-300); }
+.shell-nav a:focus-visible { outline: 2px solid var(--ice-300); outline-offset: 2px; }
 .shell-main { max-width: 1120px; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
 .page-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.25rem; }
 .eyebrow { text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.72rem; color: var(--slate-500); font-weight: 600; }
@@ -127,6 +132,7 @@ table.leads a:hover { text-decoration: underline; }
 .lead-open__hint { font-size: 0.78rem; font-weight: 400; color: var(--ice-600); text-decoration: underline; white-space: nowrap; }
 .lead-open:hover .lead-open__hint { color: var(--navy-700); }
 .lead-open:focus-visible { outline: 2px solid var(--ice-600); outline-offset: 2px; border-radius: 4px; }
+.team-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 .lead-cards { display: none; }
 @media (max-width: 760px) {
   .table-wrap { display: none; }

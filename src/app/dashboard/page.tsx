@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { LeadList } from "@/components/lead-list";
-import { canAssign, canExportLeads, LEAD_SOURCES, LEAD_STATUSES, selectBusiness } from "@/lib/access";
+import { canAssign, canExportLeads, canManageTeam, customerRoleLabel, LEAD_SOURCES, LEAD_STATUSES, selectBusiness } from "@/lib/access";
 import { leadQueryParams, parseLeadQuery, parsePage, PAGE_SIZE, SEARCH_MAX_LENGTH } from "@/lib/lead-query";
 import { SOURCE_LABELS, STATUS_LABELS } from "@/lib/format";
 import { fetchLeadPage } from "@/lib/server/lead-search";
@@ -59,8 +59,21 @@ export default async function DashboardPage({
   const assignmentValue = query.assignment.kind === "member" ? query.assignment.userId : query.assignment.kind === "all" ? "" : query.assignment.kind;
   const exportAllowed = canExportLeads(viewer.access, business.id);
 
+  const teamAllowed = canManageTeam(viewer.access, business.id);
   return (
-    <AppShell subtitle="Lead Portal" userLabel={viewer.profile.display_name || viewer.email || "Signed in"} roleLabel="Customer">
+    <AppShell
+      subtitle="Lead Portal"
+      userLabel={viewer.profile.display_name || viewer.email || "Signed in"}
+      roleLabel={customerRoleLabel(viewer.access, business.id)}
+      nav={
+        teamAllowed
+          ? [
+              { href: `/dashboard?business=${encodeURIComponent(business.slug)}`, label: "Leads", current: true },
+              { href: `/dashboard/team?business=${encodeURIComponent(business.slug)}`, label: "Team & access" },
+            ]
+          : []
+      }
+    >
       <div className="page-head">
         <div>
           <div className="eyebrow">Business workspace</div>

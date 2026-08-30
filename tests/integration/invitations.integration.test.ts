@@ -237,14 +237,15 @@ describe("owner invitation end to end", () => {
     const sb = createClient(SUPABASE_URL, ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
     expect((await sb.auth.signInWithPassword({ email: OWNER_EMAIL, password: NEW_PASSWORD })).error).toBeNull();
     try {
-      expect((await sb.from("customer_invitations").select("id")).data).toEqual([]);
-      expect((await sb.from("customer_access_events").select("id")).data).toEqual([]);
+      // owners now read exactly their OWN business's invitations (here: their own accepted one) - and nothing else
+      expect((await sb.from("customer_invitations").select("id")).data?.length).toBe(1);
+      expect((await sb.from("customer_access_events").select("id")).data).toEqual([]); // the ledger stays administrator-only
       expect((await sb.from("integration_sources").select("id")).data).toEqual([]);
       expect((await sb.from("platform_admin_events").select("id")).data).toEqual([]);
       expect((await sb.from("businesses").select("id").eq("id", BIZ_A)).data).toEqual([]);
-      // ordinary customers cannot call the administrator invitation/membership RPCs
-      expect((await sb.rpc("admin_prepare_customer_invitation", { p_business_id: id, p_email: "x@y.invalid", p_display_name: "X", p_role: "BUSINESS_STAFF" })).error?.code).toBe("42501");
-      expect((await sb.rpc("admin_set_business_member_status", { p_business_id: id, p_user_id: userId(OWNER_EMAIL), p_status: "inactive" })).error?.code).toBe("42501");
+      // owners now hold a NARROW team surface: never OWNER provisioning, never self-changes
+      expect((await sb.rpc("admin_prepare_customer_invitation", { p_business_id: id, p_email: "x@y.invalid", p_display_name: "X", p_role: "BUSINESS_OWNER" })).error?.code).toBe("22023");
+      expect((await sb.rpc("admin_set_business_member_status", { p_business_id: id, p_user_id: userId(OWNER_EMAIL), p_status: "inactive" })).error?.code).toBe("22023");
     } finally {
       await sb.auth.signOut({ scope: "local" });
     }

@@ -38,7 +38,7 @@ select is((select count(*) from pg_policies where schemaname = 'public' and 'ano
   'no policy grants anything to anon');
 select is((select count(*) from pg_policies where schemaname = 'public' and roles = '{public}'), 0::bigint,
   'no policy is addressed to PUBLIC');
-select is((select count(*) from pg_policies where schemaname = 'public'), 12::bigint,
+select is((select count(*) from pg_policies where schemaname = 'public'), 13::bigint,
   'exactly the 12 expected policies exist (7 Batch 1 + ingestion_events + lead_activities + platform_admin_events + customer_invitations + customer_access_events select)');
 
 -- ---- anon has no privileges at all ----------------------------------------

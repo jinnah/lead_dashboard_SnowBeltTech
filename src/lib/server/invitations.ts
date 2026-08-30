@@ -1,9 +1,21 @@
 import "server-only";
+import { canManageTeam } from "@/lib/access";
 import { mapAdminRpcError, type AdminResultError } from "@/lib/admin-actions";
 import { getAppBaseUrl } from "./env";
 import { logEvent } from "./http";
 import { deleteUnacceptedAuthUser, inviteAuthUser } from "./supabase-auth-admin";
 import type { Viewer } from "./viewer";
+
+/**
+ * Who may drive the invitation coordinator for ONE business: an active
+ * platform administrator (unchanged) or that business's own active
+ * BUSINESS_OWNER. Defense in depth only - every underlying RPC re-checks the
+ * same authorization inside the database, so a crafted request from a manager
+ * or foreign owner dies there even if this check were bypassed.
+ */
+function mayCoordinateInvitations(viewer: Viewer, businessId: string): boolean {
+  return viewer.access.kind === "admin" || canManageTeam(viewer.access, businessId);
+}
 
 // Invitation coordinator: the ONLY place where the application database
 // invitation lifecycle and Supabase Auth Admin are combined. The two systems
@@ -31,7 +43,7 @@ export async function inviteCustomerMember(
   displayName: string,
   role: string,
 ): Promise<InviteOutcome> {
-  if (viewer.access.kind !== "admin") return "failed"; // routes re-check; defense in depth
+  if (!mayCoordinateInvitations(viewer, businessId)) return "failed"; // routes re-check; defense in depth
   const { supabase } = viewer;
 
   const prepared = await supabase
@@ -85,7 +97,7 @@ export async function revokeCustomerInvitation(
   businessId: string,
   invitationId: string,
 ): Promise<RevokeOutcome> {
-  if (viewer.access.kind !== "admin") return "failed";
+  if (!mayCoordinateInvitations(viewer, businessId)) return "failed";
   const { supabase } = viewer;
 
   // 1. Database revocation first: from this moment acceptance is impossible,

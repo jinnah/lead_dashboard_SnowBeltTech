@@ -26,7 +26,7 @@ select is((select bool_and((select exists (select 1 from unnest(proconfig) c whe
 select is((select bool_or(has_function_privilege('anon', sig, 'EXECUTE') or has_function_privilege('public', sig, 'EXECUTE')) from hard_fns), false, 'anon and PUBLIC cannot execute');
 select is((select bool_and(has_function_privilege('authenticated', sig, 'EXECUTE')) from hard_fns), true, 'authenticated can execute');
 select is((select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public'), 15::bigint, 'public RPC inventory unchanged by this file (15)');
-select is((select count(*) from pg_policies where schemaname = 'public'), 12::bigint, 'policy inventory unchanged (12)');
+select is((select count(*) from pg_policies where schemaname = 'public'), 13::bigint, 'policy inventory unchanged by this file (13)');
 select is(pg_get_function_result('public.admin_set_business_member_role(uuid,uuid,text)'::regprocedure), 'TABLE(user_id uuid, role text, changed boolean)', 'member role return contract unchanged');
 select is(pg_get_function_result('public.admin_set_business_member_status(uuid,uuid,text)'::regprocedure), 'TABLE(user_id uuid, status text, changed boolean)', 'member status return contract unchanged');
 
@@ -187,7 +187,7 @@ select throws_ok(format($$select * from public.admin_set_business_member_role(%L
 select pg_temp.logout();
 delete from public.business_memberships where user_id = :'admin';
 select pg_temp.login_as(:'a_owner');
-select throws_ok(format($$select * from public.admin_set_business_member_role(%L, %L, 'BUSINESS_MANAGER')$$, :'biz_a', :'a_staff'), '42501', null, 'customer callers remain denied');
+select throws_ok(format($$select * from public.admin_set_business_member_role(%L, %L, 'BUSINESS_MANAGER')$$, :'biz_a', :'a_owner'), '22023', null, 'owner self-changes remain denied (owner team management is covered in file 21)');
 select pg_temp.logout();
 select pg_temp.login_as(:'admin');
 update public.leads set status = 'contacted' where id = :'lead_a1';

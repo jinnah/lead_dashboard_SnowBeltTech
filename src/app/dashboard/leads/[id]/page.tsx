@@ -4,7 +4,7 @@ import { ACTIVITY_COLUMNS, ActivityTimeline, type ActivityRow } from "@/componen
 import { AppShell } from "@/components/app-shell";
 import { LEAD_DETAIL_COLUMNS, LeadHeader, LeadInfoSections, type LeadDetail } from "@/components/lead-detail-sections";
 import { StatusForm } from "@/components/status-form";
-import { LEAD_STATUSES, canAssign } from "@/lib/access";
+import { LEAD_STATUSES, canAssign, customerRoleLabel } from "@/lib/access";
 import { FORMER_MEMBER } from "@/lib/activity-text";
 import { STATUS_LABELS, formatDateTime } from "@/lib/format";
 import { ACTIONS, ERROR_MESSAGES, OK_MESSAGES, type ActionName } from "@/lib/lead-actions";
@@ -52,7 +52,7 @@ export default async function LeadDetailPage({ params, searchParams }: { params:
   const noteRequestId = randomUUID(); // unique per render: resubmitting the same form is idempotent
 
   return (
-    <AppShell subtitle="Lead Portal" userLabel={viewer.profile.display_name || viewer.email || "Signed in"} roleLabel="Customer">
+    <AppShell subtitle="Lead Portal" userLabel={viewer.profile.display_name || viewer.email || "Signed in"} roleLabel={customerRoleLabel(viewer.access, business.id)}>
       <div className="page-head">
         <div>
           <div className="eyebrow">{business.name}</div>

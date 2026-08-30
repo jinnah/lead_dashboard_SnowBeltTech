@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
+import { customerRoleLabel } from "@/lib/access";
 import { ACCOUNT_SETUP_MESSAGES, PASSWORD_MAX, PASSWORD_MIN } from "@/lib/account-setup";
 import { getViewer } from "@/lib/server/viewer";
 
@@ -16,7 +17,7 @@ export default async function AccountSetupPage({ searchParams }: { searchParams:
   const errMsg = sp.err && sp.err in ACCOUNT_SETUP_MESSAGES ? ACCOUNT_SETUP_MESSAGES[sp.err as keyof typeof ACCOUNT_SETUP_MESSAGES] : null;
 
   return (
-    <AppShell subtitle="Lead Portal" userLabel={viewer.profile.display_name || viewer.email || "Signed in"} roleLabel="Customer">
+    <AppShell subtitle="Lead Portal" userLabel={viewer.profile.display_name || viewer.email || "Signed in"} roleLabel={customerRoleLabel(viewer.access, viewer.access.businesses[0]?.id ?? "")}>
       <div className="page-head">
         <div>
           <div className="eyebrow">Welcome</div>

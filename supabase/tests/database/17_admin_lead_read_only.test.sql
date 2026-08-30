@@ -24,7 +24,7 @@ select set_eq($$select p.proname::text from pg_proc p join pg_namespace n on n.o
   array['ingest_lead_event', 'add_lead_note', 'set_lead_assignee', 'admin_create_business', 'admin_set_business_status', 'admin_create_integration_source', 'admin_set_integration_source_status',
   'admin_prepare_customer_invitation', 'admin_mark_customer_invitation_sent', 'admin_mark_customer_invitation_failed', 'admin_revoke_customer_invitation', 'accept_customer_invitation', 'admin_set_business_member_role', 'admin_set_business_member_status', 'search_leads'],
   'public RPC inventory: exactly the fifteen reviewed RPCs');
-select is((select count(*) from pg_policies where schemaname = 'public'), 12::bigint, 'RLS policy inventory: the 12 reviewed policies');
+select is((select count(*) from pg_policies where schemaname = 'public'), 13::bigint, 'RLS policy inventory: the 13 reviewed policies');
 
 -- =====================================================================================
 -- fixture: give lead A3 a microsecond-precision follow-up via a legitimate staff session
