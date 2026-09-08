@@ -8,6 +8,9 @@ A multi-tenant lead-management portal for local service businesses (HVAC, plumbi
 
 **No hosted Supabase project is connected** (no `supabase login`/`link`, no remote database URL). The Next.js application runs locally with real Supabase Auth sign-in, a customer lead workspace (status updates, follow-up scheduling in the business timezone, append-only notes, owner/manager lead assignment, immutable activity timeline), a platform-administrator area (read-only lead inspection plus audited business onboarding, suspend/reactivate and trusted integration-source registration), and the server-to-server ingestion endpoint. Customer provisioning is invitation-only and fully local (administrator invitations, membership management, invitation acceptance with initial password setup, all against the local Supabase Auth stack and its mail catcher), and local password recovery exists (generic non-enumerating forgot-password flow through the same mail catcher). The customer workspace has database-side lead search, pagination and a role-restricted CSV export. MFA, Twilio callbacks, the live n8n cutover and any production integration (hosted Supabase, production SMTP, deployment) do not exist yet. The only other committed artifact is a sanitized reference copy of the currently live n8n workflow.
 
+The reviewed container layout and production checklist for the intended VPS are
+documented in [`docs/deployment-hostinger-vps.md`](docs/deployment-hostinger-vps.md).
+
 ## Local database development
 
 Verified prerequisites: Node 24, pnpm 11, Docker Desktop (daemon running). The Supabase CLI is a pinned dev dependency (`supabase@2.115.0` in `pnpm-lock.yaml`); no global install is required.

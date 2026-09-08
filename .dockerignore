@@ -1,0 +1,12 @@
+.git
+.gitignore
+.next
+.env
+.env.*
+!.env.example
+node_modules
+coverage
+*.log
+*.tsbuildinfo
+n8n/private
+SnowbeltTech - Form_call - Google Sheets and SMS.json
