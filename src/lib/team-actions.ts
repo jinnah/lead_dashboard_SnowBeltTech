@@ -7,7 +7,7 @@
 // proof of anything); the database RPCs re-enforce every rule again.
 import { EMAIL_MAX, normalizeInviteEmail } from "@/lib/admin-actions";
 
-export const TEAM_ACTIONS = ["invite_member", "revoke_invitation", "set_member_role", "set_member_status"] as const;
+export const TEAM_ACTIONS = ["invite_member", "revoke_invitation", "reissue_invitation", "set_member_role", "set_member_status"] as const;
 export type TeamActionName = (typeof TEAM_ACTIONS)[number];
 
 /** Roles a customer OWNER may grant or assign. Ownership stays with SnowBeltTech. */
@@ -18,6 +18,7 @@ export { EMAIL_MAX };
 export const TEAM_ACTION_FIELDS: Record<TeamActionName, readonly string[]> = {
   invite_member: ["action", "business", "email", "display_name", "role"],
   revoke_invitation: ["action", "business", "invitation_id"],
+  reissue_invitation: ["action", "business", "invitation_id"],
   set_member_role: ["action", "business", "user_id", "role"],
   set_member_status: ["action", "business", "user_id", "status"],
 };
@@ -27,6 +28,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export type ParsedTeamAction =
   | { kind: "invite_member"; email: string; displayName: string; role: (typeof TEAM_GRANTABLE_ROLES)[number] }
   | { kind: "revoke_invitation"; invitationId: string }
+  | { kind: "reissue_invitation"; invitationId: string }
   | { kind: "set_member_role"; userId: string; role: (typeof TEAM_GRANTABLE_ROLES)[number] }
   | { kind: "set_member_status"; userId: string; status: (typeof TEAM_STATUS_TARGETS)[number] };
 
@@ -70,10 +72,11 @@ export function parseTeamAction(fields: URLSearchParams): TeamParse {
       if (!(TEAM_GRANTABLE_ROLES as readonly string[]).includes(role)) return { ok: false, error: "invalid_role" };
       return { ok: true, businessSlug, action: { kind: "invite_member", email, displayName, role: role as (typeof TEAM_GRANTABLE_ROLES)[number] } };
     }
+    case "reissue_invitation":
     case "revoke_invitation": {
       const invitationId = got.invitation_id!;
       if (!UUID.test(invitationId)) return { ok: false, error: "invalid_invitation" };
-      return { ok: true, businessSlug, action: { kind: "revoke_invitation", invitationId: invitationId.toLowerCase() } };
+      return { ok: true, businessSlug, action: { kind: action, invitationId: invitationId.toLowerCase() } };
     }
     case "set_member_role": {
       const userId = got.user_id!;

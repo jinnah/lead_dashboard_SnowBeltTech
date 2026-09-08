@@ -4,6 +4,7 @@ import { ConfirmForm } from "@/components/confirm-form";
 import { canManageTeam, customerRoleLabel, ROLE_DISPLAY_LABELS, selectBusiness, type BusinessRole } from "@/lib/access";
 import { ADMIN_ERROR_MESSAGES, ADMIN_OK_MESSAGES, EMAIL_MAX, type AdminOk, type AdminResultError } from "@/lib/admin-actions";
 import { TEAM_GRANTABLE_ROLES } from "@/lib/team-actions";
+import { canReissueInvitation, invitationStatusLabel } from "@/lib/invitation-state";
 import { getViewer, loadTeam } from "@/lib/server/viewer";
 
 export const dynamic = "force-dynamic";
@@ -14,12 +15,13 @@ export const dynamic = "force-dynamic";
 // back to their workspace). Rendering exposes display names, roles, statuses
 // and invitation emails the owner created - never UUIDs beyond form values the
 // server fully re-authorizes, and never tokens, ledgers or foreign tenants.
-const OK_KEYS: readonly AdminOk[] = ["invited", "invitation_revoked", "member_role_updated", "member_status_updated"];
+const OK_KEYS: readonly AdminOk[] = ["invited", "invitation_revoked", "invitation_reissued", "member_role_updated", "member_status_updated"];
 const ERR_KEYS: readonly (AdminResultError | string)[] = [
   "unsupported_action", "missing_field", "duplicate_field", "unexpected_field",
   "invalid_email", "invalid_display_name", "invalid_role", "invalid_member", "invalid_invitation", "invalid_status",
   "email_in_use", "invitation_exists", "invite_delivery_failed", "self_forbidden", "owner_protected",
   "not_operable", "last_owner", "not_allowed", "not_found", "failed",
+  "reissue_failed",
 ];
 
 interface InvitationRow {
@@ -28,6 +30,8 @@ interface InvitationRow {
   display_name: string;
   role: string;
   status: string;
+  expires_at: string;
+  sent_at: string | null;
 }
 
 export default async function TeamPage({ searchParams }: { searchParams: Promise<{ business?: string; ok?: string; err?: string }> }) {
@@ -46,12 +50,15 @@ export default async function TeamPage({ searchParams }: { searchParams: Promise
   // Live invitations for THIS business only (owner-scoped RLS policy).
   const { data: invitationRows } = await viewer.supabase
     .from("customer_invitations")
-    .select("id, email, display_name, role, status")
+    .select("id, email, display_name, role, status, expires_at, sent_at")
     .eq("business_id", business.id)
     .in("status", ["prepared", "sent"])
     .order("created_at", { ascending: false })
     .returns<InvitationRow[]>();
   const invitations = invitationRows ?? [];
+  // Dynamic server response: expiry must be evaluated anew for each request.
+  // eslint-disable-next-line react-hooks/purity
+  const now = Date.now();
 
   const okMsg = params.ok && (OK_KEYS as readonly string[]).includes(params.ok) ? ADMIN_OK_MESSAGES[params.ok as AdminOk] : null;
   const errMsg = params.err && (ERR_KEYS as readonly string[]).includes(params.err) ? ADMIN_ERROR_MESSAGES[params.err as AdminResultError] : null;
@@ -185,6 +192,7 @@ export default async function TeamPage({ searchParams }: { searchParams: Promise
 
       <section className="card" aria-labelledby="pending-h" style={{ marginTop: "1.25rem" }}>
         <h2 id="pending-h">Pending invitations</h2>
+        <p className="muted">Sending a new invitation invalidates the previous link. Available five minutes after sending.</p>
         {invitations.length === 0 ? (
           <div className="empty">No pending invitations.</div>
         ) : (
@@ -205,8 +213,15 @@ export default async function TeamPage({ searchParams }: { searchParams: Promise
                     <td>{inv.email}</td>
                     <td>{inv.display_name}</td>
                     <td>{roleLabel(inv.role)}</td>
-                    <td>Pending invitation</td>
+                    <td>{invitationStatusLabel(inv, now)}</td>
                     <td>
+                      {inv.role !== "BUSINESS_OWNER" && canReissueInvitation(inv, now) ? (
+                        <ConfirmForm action="/api/team/actions"
+                          confirm="Send a new invitation? The previous link will stop working immediately, even if delivery fails."
+                          fields={{ action: "reissue_invitation", business: business.slug, invitation_id: inv.id }}>
+                          <button type="submit" className="btn btn--secondary">Send new invitation</button>
+                        </ConfirmForm>
+                      ) : null}
                       <ConfirmForm
                         action="/api/team/actions"
                         confirm={`Revoke the pending invitation for ${inv.email}? The emailed link stops working immediately.`}

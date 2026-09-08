@@ -5,7 +5,7 @@
 // duplicated fields are errors, never guesses.
 
 export const PLATFORM_ACTIONS = ["create_business"] as const;
-export const BUSINESS_ACTIONS = ["set_business_status", "create_source", "set_source_status", "invite_member", "revoke_invitation", "set_member_role", "set_member_status"] as const;
+export const BUSINESS_ACTIONS = ["set_business_status", "create_source", "set_source_status", "invite_member", "revoke_invitation", "reissue_invitation", "set_member_role", "set_member_status"] as const;
 export type PlatformAction = (typeof PLATFORM_ACTIONS)[number];
 export type BusinessAction = (typeof BUSINESS_ACTIONS)[number];
 export type AdminActionName = PlatformAction | BusinessAction;
@@ -18,6 +18,7 @@ export const ADMIN_ACTION_FIELDS: Record<AdminActionName, { required: readonly s
   set_source_status: { required: ["action", "source_id", "status"], optional: [] },
   invite_member: { required: ["action", "email", "display_name", "role"], optional: [] },
   revoke_invitation: { required: ["action", "invitation_id"], optional: [] },
+  reissue_invitation: { required: ["action", "invitation_id"], optional: [] },
   set_member_role: { required: ["action", "user_id", "role"], optional: [] },
   set_member_status: { required: ["action", "user_id", "status"], optional: [] },
 };
@@ -103,6 +104,7 @@ export type ParsedAdminAction =
   | { kind: "set_source_status"; sourceId: string; status: (typeof SOURCE_STATUS_TARGETS)[number] }
   | { kind: "invite_member"; email: string; displayName: string; role: (typeof CUSTOMER_ROLES)[number] }
   | { kind: "revoke_invitation"; invitationId: string }
+  | { kind: "reissue_invitation"; invitationId: string }
   | { kind: "set_member_role"; userId: string; role: (typeof CUSTOMER_ROLES)[number] }
   | { kind: "set_member_status"; userId: string; status: (typeof MEMBER_STATUS_TARGETS)[number] };
 
@@ -115,11 +117,12 @@ export type AdminActionError =
 /** Database outcomes mapped to allow-listed codes (never the SQL message). */
 export type AdminResultError = AdminActionError | "slug_taken" | "source_taken" | "not_found" | "not_operable" | "not_allowed" | "failed"
   | "email_in_use" | "invitation_exists" | "invite_delivery_failed" | "owner_required" | "last_owner" | "invalid_input"
-  | "self_forbidden" | "owner_protected" | "account_deactivated";
+  | "self_forbidden" | "owner_protected" | "account_deactivated" | "reissue_failed";
 export type AdminOk = "business_created" | "business_status_updated" | "source_created" | "source_status_updated"
-  | "invited" | "invitation_revoked" | "member_role_updated" | "member_status_updated";
+  | "invited" | "invitation_revoked" | "invitation_reissued" | "member_role_updated" | "member_status_updated";
 
 export const ADMIN_ERROR_MESSAGES: Record<AdminResultError, string> = {
+  reissue_failed: "A new invitation could not be sent. Refresh the list. Replacement is available five minutes after sending; contact SnowBeltTech if you still need help.",
   unsupported_action: "That action is not supported.",
   unexpected_field: "The request contained unexpected data.",
   missing_field: "A required field was missing. Please fill in the form again.",
@@ -157,6 +160,7 @@ export const ADMIN_ERROR_MESSAGES: Record<AdminResultError, string> = {
 };
 
 export const ADMIN_OK_MESSAGES: Record<AdminOk, string> = {
+  invitation_reissued: "New invitation sent. The previous link no longer works.",
   business_created: "Business created.",
   business_status_updated: "Business status updated.",
   source_created: "Integration source registered.",
@@ -282,10 +286,11 @@ export function parseAdminAction(fields: URLSearchParams, scope: "platform" | "b
       if (!(CUSTOMER_ROLES as readonly string[]).includes(role)) return { ok: false, error: "invalid_role" };
       return { ok: true, action: { kind: "invite_member", email, displayName, role: role as (typeof CUSTOMER_ROLES)[number] } };
     }
+    case "reissue_invitation":
     case "revoke_invitation": {
       const invitationId = got.invitation_id!;
       if (!UUID.test(invitationId)) return { ok: false, error: "invalid_invitation" };
-      return { ok: true, action: { kind: "revoke_invitation", invitationId: invitationId.toLowerCase() } };
+      return { ok: true, action: { kind: action, invitationId: invitationId.toLowerCase() } };
     }
     case "set_member_role": {
       const userId = got.user_id!;
@@ -332,6 +337,7 @@ export function describeAccessEvent(e: AccessEventRow, nameFor: (userId: string 
     case "invitation_sent": return "Invitation sent";
     case "invitation_failed": return "Invitation delivery failed";
     case "invitation_revoked": return "Invitation revoked";
+    case "invitation_reissue_requested": return "New invitation requested; previous invitation revoked";
     case "invitation_accepted": return `Invitation accepted by ${nameFor(e.target_user_id)}`;
     case "membership_role_changed": return `${nameFor(e.target_user_id)}: ${ROLE_SHORT[e.old_value ?? ""] ?? e.old_value} → ${ROLE_SHORT[e.new_value ?? ""] ?? e.new_value}`;
     case "membership_status_changed": return `${nameFor(e.target_user_id)}: membership ${e.old_value} → ${e.new_value}`;

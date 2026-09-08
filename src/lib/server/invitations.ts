@@ -35,6 +35,35 @@ function mayCoordinateInvitations(viewer: Viewer, businessId: string): boolean {
 export type InviteOutcome = "invited" | "invite_delivery_failed" | AdminResultError;
 export type RevokeOutcome = "invitation_revoked" | "not_found" | "not_operable" | "failed";
 
+/** A one-shot replacement, using the same invitation coordinator throughout. */
+export async function reissueCustomerInvitation(
+  viewer: Viewer, requestId: string, businessId: string, invitationId: string,
+): Promise<"invitation_reissued" | "reissue_failed"> {
+  if (!mayCoordinateInvitations(viewer, businessId)) return "reissue_failed";
+  try {
+    const claimed = await viewer.supabase
+      .rpc("admin_begin_customer_invitation_reissue", { p_business_id: businessId, p_invitation_id: invitationId })
+      .single<{ email: string; display_name: string; role: string; cleanup_auth_user_id: string | null }>();
+    if (claimed.error || !claimed.data) return "reissue_failed";
+    const old = claimed.data;
+    // The old row is already revoked. Do not create or send anything unless
+    // its verified Auth account was removed successfully. Unknown outcomes
+    // leave access closed and are never retried implicitly.
+    if (old.cleanup_auth_user_id && !await deleteUnacceptedAuthUser(old.cleanup_auth_user_id, old.email)) {
+      logEvent({ requestId, event: "reissue_invitation", category: "cleanup_failed" });
+      return "reissue_failed";
+    }
+    const outcome = await inviteCustomerMember(viewer, requestId, businessId, old.email, old.display_name, old.role);
+    const ok = outcome === "invited";
+    logEvent({ requestId, event: "reissue_invitation", category: ok ? "ok" : "failed" });
+    return ok ? "invitation_reissued" : "reissue_failed";
+  } catch {
+    // No raw Auth/database/network exception may reach logs or responses.
+    logEvent({ requestId, event: "reissue_invitation", category: "failed" });
+    return "reissue_failed";
+  }
+}
+
 export async function inviteCustomerMember(
   viewer: Viewer,
   requestId: string,

@@ -26,6 +26,8 @@ const STAFF_EMAIL = `staff-${RUN}@juliet.example.invalid`;
 const REVOKED_EMAIL = `revoked-${RUN}@juliet.example.invalid`;
 const FAILED_EMAIL = `failed-${RUN}@juliet.example.invalid`;
 const ALL_EMAILS = [OWNER_EMAIL, MANAGER_EMAIL, STAFF_EMAIL, REVOKED_EMAIL, FAILED_EMAIL];
+const REISSUE_EMAILS = ["staff", "manager", "owner", "failure"].map(x => `reissue-${x}-${RUN}@juliet.example.invalid`);
+ALL_EMAILS.push(...REISSUE_EMAILS);
 const NEW_PASSWORD = `Set-By-Invitee-${RUN}-42`;
 
 function env(name: string): string {
@@ -464,10 +466,109 @@ describe("revocation, failure compensation and hardening", () => {
   });
 });
 
+describe("safe invitation reissue", () => {
+  const age = (id: string, expired = true) => sql(`update public.customer_invitations set sent_at=now()-interval '6 minutes', expires_at=now()+interval '${expired ? '-1 second' : '1 hour'}' where id='${id}'`);
+  const replace = (s: Session, id: string, inv: string, owner = false) => owner
+    ? s.post('/api/team/actions', { action: 'reissue_invitation', business: SLUG, invitation_id: inv })
+    : s.post(`/api/admin/businesses/${id}/actions`, { action: 'reissue_invitation', invitation_id: inv });
+  it.each([[0, "BUSINESS_STAFF"], [1, "BUSINESS_MANAGER"]] as const)("owner replaces expired invitation %s, old link fails and new membership is exact", async (index, role) => {
+    const admin = await login("platform-admin@example.invalid");
+    const owner = await login(OWNER_EMAIL, NEW_PASSWORD);
+    const id = bizId(), email = REISSUE_EMAILS[index]!;
+    expect((await invite(admin, id, email, "Reissue Synthetic", role)).location).toMatch(/ok=invited$/);
+    const [oldId, , oldUser] = invitation(email).split("|");
+    const oldLink = await invitationLink(email);
+    // Crafted request during the cooldown is rejected in the database too.
+    expect((await replace(owner, id, oldId!, true)).location).toMatch(/err=reissue_failed$/);
+    expect(authUsers(email)).toBe(1);
+    age(oldId!);
+    const page = await owner.get(`/dashboard/team?business=${SLUG}`);
+    expect(page.text).toContain("Expired invitation");
+    expect(page.text).toContain("Send new invitation");
+    expect(page.text).toContain("previous link");
+    expect(page.text).toContain('value="revoke_invitation"');
+    const results = await Promise.all(Array.from({ length: 4 }, () => replace(owner, id, oldId!, true)));
+    expect(results.filter(r => r.location?.endsWith("ok=invitation_reissued"))).toHaveLength(1);
+    expect(results.filter(r => r.location?.endsWith("err=reissue_failed"))).toHaveLength(3);
+    for (const r of results) { expect(r.headers.get("cache-control")).toBe("private, no-store"); expect(r.location?.includes(email)).toBe(false); }
+    const [nextId, status, nextUser] = invitation(email).split("|");
+    expect(status).toBe("sent"); expect(nextId === oldId).toBe(false); expect(nextUser === oldUser).toBe(false);
+    expect(authUsers(email)).toBe(1);
+    expect(sql(`select count(*) from auth.users where id='${oldUser}'`)).toBe("0");
+    expect(sql(`select status from public.customer_invitations where id='${oldId}'`)).toBe("revoked");
+    expect(sql(`select raw_user_meta_data->>'portal_invitation_id' from auth.users where id='${nextUser}'`)).toBe(nextId);
+    const old = await fetch(oldLink, { redirect: "manual" });
+    expect(old.headers.get("location")).toMatch(/login\?error=invite$/);
+    expect(membership(email)).toBe("");
+    const nextLink = await invitationLink(email);
+    expect(nextLink === oldLink).toBe(false);
+    await followInvitation(nextLink);
+    expect(membership(email)).toBe(`${role}|active`);
+    expect(sql(`select business_id::text from public.business_memberships where user_id='${nextUser}'`)).toBe(id);
+    const replay = await fetch(nextLink, { redirect: "manual" });
+    expect(replay.headers.get("location")).toMatch(/login\?error=invite$/);
+    expect((await replace(owner, id, nextId!, true)).location).toMatch(/err=reissue_failed$/); // accepted
+    expect((await replace(owner, id, oldId!, true)).location).toMatch(/err=reissue_failed$/); // revoked
+    expect(sql(`select count(*) from public.customer_access_events where invitation_id='${oldId}' and event_type='invitation_reissue_requested'`)).toBe("1");
+  });
+  it("admin can replace an unexpired Owner invitation; customer-owner cannot", async () => {
+    const admin = await login("platform-admin@example.invalid"), owner = await login(OWNER_EMAIL, NEW_PASSWORD);
+    const id=bizId(), email=REISSUE_EMAILS[2]!;
+    expect((await invite(admin,id,email,"Reissue Owner Synthetic","BUSINESS_OWNER")).location).toMatch(/ok=invited$/);
+    const [oldId] = invitation(email).split("|"); age(oldId!, false);
+    const page = await owner.get(`/dashboard/team?business=${SLUG}`);
+    const row = page.text.match(new RegExp(`<tr[^>]*>[^]*?${email}[^]*?</tr>`))?.[0] ?? "";
+    expect(row.includes('value="reissue_invitation"')).toBe(false);
+    expect((await replace(owner,id,oldId!,true)).location).toMatch(/err=reissue_failed$/);
+    const adminPage = await admin.get(`/admin/businesses/${id}`);
+    expect(adminPage.text).toContain("link usable"); expect(adminPage.text).toContain("Send new invitation");
+    expect((await replace(admin,id,oldId!)).location).toMatch(/ok=invitation_reissued$/);
+    await followInvitation(await invitationLink(email));
+    expect(membership(email)).toBe("BUSINESS_OWNER|active");
+    expect((await admin.get('/dashboard/team')).location).toMatch(/\/admin$/);
+  });
+  it("crafted requests enforce route authorization and exact form allow lists", async () => {
+    const id=bizId(), inv='00000000-0000-4000-8000-00000000dead';
+    expect((await replace(new Session(),id,inv,true)).status).toBe(401);
+    for (const email of [MANAGER_EMAIL, STAFF_EMAIL]) {
+      const s=await login(email,NEW_PASSWORD);
+      expect((await replace(s,id,inv,true)).status).toBe(403);
+      expect((await replace(s,id,inv)).status).toBe(404);
+    }
+    const admin=await login('platform-admin@example.invalid');
+    expect((await replace(admin,id,inv,true)).status).toBe(404);
+    const owner=await login(OWNER_EMAIL,NEW_PASSWORD);
+    const foreign='f9000000-0000-4000-8000-000000000001';
+    sql(`insert into public.customer_invitations(id,business_id,email,display_name,role,expires_at,created_by) values ('${foreign}','${BIZ_A}','foreign-reissue@example.invalid','Foreign Synthetic','BUSINESS_STAFF',now()+interval '1 hour','10000000-0000-4000-8000-000000000001')`);
+    try { expect((await replace(owner,id,foreign,true)).location).toBe((await replace(owner,id,inv,true)).location); }
+    finally { sql(`delete from public.customer_invitations where id='${foreign}'`); }
+    const fields={action:'reissue_invitation', business:SLUG, invitation_id:inv};
+    for (const key of ['email','display_name','role','auth_user_id','redirect_to','token']) {
+      expect((await owner.post('/api/team/actions',{...fields,[key]:'untrusted'})).location).toMatch(/err=unexpected_field$/);
+    }
+    expect((await owner.post('/api/team/actions',fields,{origin:'https://evil.example.invalid','sec-fetch-site':'cross-site'})).status).toBe(403);
+    expect((await owner.postRaw('/api/team/actions','{}',{'content-type':'application/json'})).status).toBe(415);
+    expect((await owner.postRaw('/api/team/actions','x'.repeat(17000))).status).toBe(413);
+  });
+  it("replacement email failure leaves both links without access and no Auth orphan", async () => {
+    const admin=await login('platform-admin@example.invalid'),id=bizId(),email=REISSUE_EMAILS[3]!;
+    expect((await invite(admin,id,email,'Reissue Failure Synthetic','BUSINESS_STAFF')).location).toMatch(/ok=invited$/);
+    const [oldId]=invitation(email).split('|'), oldLink=await invitationLink(email); age(oldId!);
+    expect(spawnSync('docker',['stop',MAIL_CONTAINER],{encoding:'utf8'}).status).toBe(0);
+    try { expect((await replace(admin,id,oldId!)).location).toMatch(/err=reissue_failed$/); }
+    finally { spawnSync('docker',['start',MAIL_CONTAINER],{encoding:'utf8'}); }
+    expect(invitation(email).split('|')[1]).toBe('failed');
+    expect(authUsers(email)).toBe(0); expect(membership(email)).toBe('');
+    expect(sql(`select status from public.customer_invitations where id='${oldId}'`)).toBe('revoked');
+    expect((await fetch(oldLink,{redirect:'manual'})).headers.get('location')).toMatch(/login\?error=invite$/);
+    expect((await replace(admin,id,invitation(email).split('|')[0]!)).location).toMatch(/err=reissue_failed$/);
+  });
+});
+
 describe("secret and data isolation", () => {
   it("29-30: no invited email, password, token, link, JWT or key in server logs or browser bundles", async () => {
     const log = serverLog.join("");
-    for (const forbidden of [...ALL_EMAILS, NEW_PASSWORD, "token_hash=", "/auth/v1/verify", "Juliet Owner", "Juliet Manager", SERVICE_KEY, INGEST_TOKEN, PASSWORD]) {
+    for (const forbidden of [...ALL_EMAILS, NEW_PASSWORD, "token_hash=", "/auth/v1/verify", "Juliet Owner", "Juliet Manager", "Reissue Synthetic", "Reissue Owner Synthetic", "Reissue Failure Synthetic", SERVICE_KEY, INGEST_TOKEN, PASSWORD]) {
       expect(log, forbidden.slice(0, 16)).not.toContain(forbidden);
     }
     expect(log).not.toMatch(/eyJ[A-Za-z0-9_-]{20,}\./);
@@ -480,7 +581,7 @@ describe("secret and data isolation", () => {
     expect(files.length).toBeGreaterThan(0);
     for (const f of files) {
       const text = readFileSync(f, "utf8");
-      for (const forbidden of [SERVICE_KEY, INGEST_TOKEN, "SUPABASE_SERVICE_ROLE_KEY", "supabase-admin", "supabase-auth-admin", "inviteUserByEmail", NEW_PASSWORD]) {
+      for (const forbidden of [SERVICE_KEY, INGEST_TOKEN, "SUPABASE_SERVICE_ROLE_KEY", "supabase-admin", "supabase-auth-admin", "inviteUserByEmail", "portal_invitation_id", NEW_PASSWORD]) {
         expect(text, path.basename(f)).not.toContain(forbidden);
       }
     }

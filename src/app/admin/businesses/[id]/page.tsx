@@ -1,6 +1,8 @@
 import { notFound, redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { BusinessStatusBadge } from "@/components/badges";
+import { ConfirmForm } from "@/components/confirm-form";
+import { canReissueInvitation, invitationStatusLabel } from "@/lib/invitation-state";
 import {
   ADMIN_ERROR_MESSAGES, ADMIN_OK_MESSAGES, CUSTOMER_ROLE_LABELS, CUSTOMER_ROLES, describeAccessEvent, describeAdminEvent,
   EMAIL_MAX, EXTERNAL_ID_MAX, INDUSTRY_LABELS, LABEL_MAX, REGISTRABLE_SOURCE_KINDS, SOURCE_KIND_LABELS,
@@ -16,7 +18,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 interface BusinessDetail { id: string; name: string; slug: string; industry: string; timezone: string; status: string; created_at: string }
 interface SourceRow { id: string; kind: string; external_id: string; label: string | null; allowed_origin: string | null; status: string; created_at: string }
 interface MemberRow { user_id: string; role: string; status: string; created_at: string; profiles: { display_name: string; is_active: boolean; platform_role: string | null } | null }
-interface InvitationRow { id: string; email: string; display_name: string; role: string; status: string; created_at: string; sent_at: string | null; accepted_at: string | null; closed_at: string | null }
+interface InvitationRow { id: string; email: string; display_name: string; role: string; status: string; expires_at: string; created_at: string; sent_at: string | null; accepted_at: string | null; closed_at: string | null }
 
 // Administrator business configuration: lifecycle (suspend/reactivate), trusted
 // integration sources and the platform-operations ledger. Everything is read
@@ -41,7 +43,7 @@ export default async function AdminBusinessPage({ params, searchParams }: { para
     supabase.from("integration_sources").select("id, kind, external_id, label, allowed_origin, status, created_at").eq("business_id", business.id).order("created_at", { ascending: true }).returns<SourceRow[]>(),
     supabase.from("platform_admin_events").select("id, event_type, integration_source_id, actor_display_name, old_value, new_value, created_at").eq("business_id", business.id).order("created_at", { ascending: false }).limit(50).returns<AdminEventRow[]>(),
     supabase.from("business_memberships").select("user_id, role, status, created_at, profiles(display_name, is_active, platform_role)").eq("business_id", business.id).order("created_at", { ascending: true }).returns<MemberRow[]>(),
-    supabase.from("customer_invitations").select("id, email, display_name, role, status, created_at, sent_at, accepted_at, closed_at").eq("business_id", business.id).order("created_at", { ascending: false }).limit(50).returns<InvitationRow[]>(),
+    supabase.from("customer_invitations").select("id, email, display_name, role, status, expires_at, created_at, sent_at, accepted_at, closed_at").eq("business_id", business.id).order("created_at", { ascending: false }).limit(50).returns<InvitationRow[]>(),
     supabase.from("customer_access_events").select("id, event_type, invitation_id, target_user_id, actor_display_name, old_value, new_value, created_at").eq("business_id", business.id).order("created_at", { ascending: false }).limit(50).returns<AccessEventRow[]>(),
   ]);
   // customer memberships only: platform administrators are never listed or manageable here
@@ -61,6 +63,9 @@ export default async function AdminBusinessPage({ params, searchParams }: { para
   const errMsg = sp.err && sp.err in ADMIN_ERROR_MESSAGES ? ADMIN_ERROR_MESSAGES[sp.err as AdminResultError] : null;
   const operable = business.status === "active" || business.status === "suspended";
   const actionUrl = `/api/admin/businesses/${business.id}/actions`;
+  // Dynamic server response: expiry must be evaluated anew for each request.
+  // eslint-disable-next-line react-hooks/purity
+  const now = Date.now();
 
   return (
     <AppShell subtitle="Platform administration" userLabel={viewer.profile.display_name || viewer.email || "Administrator"} roleLabel="Platform administrator">
@@ -223,6 +228,7 @@ export default async function AdminBusinessPage({ params, searchParams }: { para
 
         <section className="card card--wide" aria-labelledby="inv-h">
           <h2 id="inv-h">Invitations</h2>
+          <p className="muted">Sending a new invitation invalidates the previous link. Available five minutes after sending.</p>
           <div className="table-wrap" style={{ marginBottom: "1rem" }}>
             <table className="leads">
               <thead><tr><th scope="col">Email</th><th scope="col">Name</th><th scope="col">Role</th><th scope="col">Status</th><th scope="col">Created</th><th scope="col">Sent</th><th scope="col">Accepted</th><th scope="col">Closed</th><th scope="col">Action</th></tr></thead>
@@ -233,12 +239,19 @@ export default async function AdminBusinessPage({ params, searchParams }: { para
                     <td>{i.email}</td>
                     <td>{i.display_name}</td>
                     <td>{CUSTOMER_ROLE_LABELS[i.role as keyof typeof CUSTOMER_ROLE_LABELS] ?? i.role}</td>
-                    <td><span className={`badge badge--${i.status === "accepted" ? "active" : i.status === "sent" ? "new" : "archived"}`}>{i.status}</span></td>
+                    <td><span className={`badge badge--${i.status === "accepted" ? "active" : i.status === "sent" ? "new" : "archived"}`}>{invitationStatusLabel(i, now)}</span></td>
                     <td>{formatDateTime(i.created_at, tz)}</td>
                     <td>{formatDateTime(i.sent_at, tz)}</td>
                     <td>{formatDateTime(i.accepted_at, tz)}</td>
                     <td>{formatDateTime(i.closed_at, tz)}</td>
                     <td>
+                      {business.status === "active" && canReissueInvitation(i, now) ? (
+                        <ConfirmForm action={actionUrl}
+                          confirm="Send a new invitation? The previous link will stop working immediately, even if delivery fails."
+                          fields={{ action: "reissue_invitation", invitation_id: i.id }}>
+                          <button type="submit" className="btn btn--secondary">Send new invitation</button>
+                        </ConfirmForm>
+                      ) : null}
                       {operable && (i.status === "prepared" || i.status === "sent") ? (
                         <form method="post" action={actionUrl}>
                           <input type="hidden" name="action" value="revoke_invitation" />

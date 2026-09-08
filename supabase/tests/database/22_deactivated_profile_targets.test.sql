@@ -24,8 +24,8 @@ select is(has_function_privilege('anon', 'public.admin_set_business_member_statu
 select is((select count(*) from pg_policies where schemaname = 'public'), 13::bigint, 'policy inventory unchanged (13)');
 select set_eq($$select p.proname::text from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public'$$,
   array['ingest_lead_event', 'add_lead_note', 'set_lead_assignee', 'admin_create_business', 'admin_set_business_status', 'admin_create_integration_source', 'admin_set_integration_source_status',
-  'admin_prepare_customer_invitation', 'admin_mark_customer_invitation_sent', 'admin_mark_customer_invitation_failed', 'admin_revoke_customer_invitation', 'accept_customer_invitation', 'admin_set_business_member_role', 'admin_set_business_member_status', 'search_leads'],
-  'public RPC inventory unchanged (15)');
+  'admin_prepare_customer_invitation', 'admin_mark_customer_invitation_sent', 'admin_mark_customer_invitation_failed', 'admin_revoke_customer_invitation', 'accept_customer_invitation', 'admin_set_business_member_role', 'admin_set_business_member_status', 'search_leads', 'admin_begin_customer_invitation_reissue'],
+  'public RPC inventory with invitation reissue (16)');
 
 -- =====================================================================================
 -- fixture: SnowBeltTech deactivates staff A's PROFILE (platform-level control)

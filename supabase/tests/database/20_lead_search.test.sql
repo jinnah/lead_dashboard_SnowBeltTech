@@ -35,8 +35,8 @@ select is(pg_get_function_result('public.search_leads(uuid,text,text,text,boolea
   'returns exactly the reviewed columns');
 select set_eq($$select p.proname::text from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public'$$,
   array['ingest_lead_event', 'add_lead_note', 'set_lead_assignee', 'admin_create_business', 'admin_set_business_status', 'admin_create_integration_source', 'admin_set_integration_source_status',
-  'admin_prepare_customer_invitation', 'admin_mark_customer_invitation_sent', 'admin_mark_customer_invitation_failed', 'admin_revoke_customer_invitation', 'accept_customer_invitation', 'admin_set_business_member_role', 'admin_set_business_member_status', 'search_leads'],
-  'public schema exposes exactly the fifteen reviewed RPCs');
+  'admin_prepare_customer_invitation', 'admin_mark_customer_invitation_sent', 'admin_mark_customer_invitation_failed', 'admin_revoke_customer_invitation', 'accept_customer_invitation', 'admin_set_business_member_role', 'admin_set_business_member_status', 'search_leads', 'admin_begin_customer_invitation_reissue'],
+  'public schema exposes exactly the sixteen reviewed RPCs');
 select is((select count(*) from pg_policies where schemaname = 'public'), 13::bigint, 'RLS policy inventory unchanged by this file (13)');
 
 -- =====================================================================================

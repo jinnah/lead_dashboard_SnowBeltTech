@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
-import { inviteCustomerMember, revokeCustomerInvitation } from "./invitations";
+import { inviteCustomerMember, reissueCustomerInvitation, revokeCustomerInvitation } from "./invitations";
 import type { Viewer } from "./viewer";
 
 // Coordinator fault-injection: the Auth Admin boundary is mocked so every
@@ -52,6 +52,65 @@ function expectNoLeakage() {
     expect(all.toLowerCase(), forbidden).not.toContain(forbidden.toLowerCase());
   }
 }
+
+describe("reissue coordination", () => {
+  const claim = { data: { email: EMAIL, display_name: NAME, role: "BUSINESS_MANAGER", cleanup_auth_user_id: AUTH_USER }, error: null };
+  it("revokes first, cleans only the exact old account, then uses ordinary invitation delivery with a NEW marker", async () => {
+    const next = "c0000000-0000-4000-8000-0000000000c2";
+    (deleteUnacceptedAuthUser as Mock).mockResolvedValue(true);
+    (inviteAuthUser as Mock).mockResolvedValue({ ok: true, userId: "replacement-user" });
+    const { viewer, calls } = fakeViewer({
+      admin_begin_customer_invitation_reissue: claim,
+      admin_prepare_customer_invitation: { data: { invitation_id: next }, error: null },
+      admin_mark_customer_invitation_sent: { data: { invitation_id: next, status: "sent" }, error: null },
+    });
+    expect(await reissueCustomerInvitation(viewer, "req-r", BIZ, INV)).toBe("invitation_reissued");
+    expect(calls.map(c => c.fn)).toEqual(["admin_begin_customer_invitation_reissue", "admin_prepare_customer_invitation", "admin_mark_customer_invitation_sent"]);
+    expect(calls[1]?.args).toEqual({ p_business_id: BIZ, p_email: EMAIL, p_display_name: NAME, p_role: "BUSINESS_MANAGER" });
+    expect(deleteUnacceptedAuthUser).toHaveBeenCalledExactlyOnceWith(AUTH_USER, EMAIL);
+    expect(inviteAuthUser).toHaveBeenCalledExactlyOnceWith(EMAIL, expect.any(String), next);
+    expect((deleteUnacceptedAuthUser as Mock).mock.invocationCallOrder[0]).toBeLessThan((inviteAuthUser as Mock).mock.invocationCallOrder[0]!);
+    expectNoLeakage();
+  });
+  it("opaque claim rejection never touches Auth or prepares a replacement", async () => {
+    const { viewer, calls } = fakeViewer({ admin_begin_customer_invitation_reissue: { data: null, error: { code: "P0002", message: "smtp boom token" } } });
+    expect(await reissueCustomerInvitation(viewer, "req-r", BIZ, INV)).toBe("reissue_failed");
+    expect(calls).toHaveLength(1); expect(inviteAuthUser).not.toHaveBeenCalled(); expect(deleteUnacceptedAuthUser).not.toHaveBeenCalled(); expectNoLeakage();
+  });
+  it("failed old-account cleanup prevents new delivery", async () => {
+    (deleteUnacceptedAuthUser as Mock).mockResolvedValue(false);
+    const { viewer, calls } = fakeViewer({ admin_begin_customer_invitation_reissue: claim });
+    expect(await reissueCustomerInvitation(viewer, "req-r", BIZ, INV)).toBe("reissue_failed");
+    expect(calls).toHaveLength(1); expect(inviteAuthUser).not.toHaveBeenCalled(); expectNoLeakage();
+  });
+  it("replacement Auth failure uses the existing exact-attempt compensation", async () => {
+    (deleteUnacceptedAuthUser as Mock).mockResolvedValue(true);
+    (inviteAuthUser as Mock).mockResolvedValue({ ok: false, category: "failed" });
+    const { viewer, calls } = fakeViewer({
+      admin_begin_customer_invitation_reissue: claim,
+      admin_prepare_customer_invitation: { data: { invitation_id: "replacement" }, error: null },
+      admin_mark_customer_invitation_failed: { data: { cleanup_auth_user_id: "replacement-user" }, error: null },
+    });
+    expect(await reissueCustomerInvitation(viewer, "req-r", BIZ, INV)).toBe("reissue_failed");
+    expect(calls[2]?.args).toEqual({ p_invitation_id: "replacement" });
+    expect(deleteUnacceptedAuthUser).toHaveBeenNthCalledWith(2, "replacement-user", EMAIL); expectNoLeakage();
+  });
+  it("denies non-owner viewers before any database or Auth access", async () => {
+    const { viewer, calls } = fakeViewer({});
+    viewer.access = { kind: "admin", businesses: [], roles: {} };
+    for (const role of ["BUSINESS_MANAGER", "BUSINESS_STAFF"] as const) {
+      viewer.access = { kind: "customer", businesses: [], roles: { [BIZ]: role } };
+      expect(await reissueCustomerInvitation(viewer, "req-r", BIZ, INV)).toBe("reissue_failed");
+    }
+    expect(calls).toHaveLength(0); expect(inviteAuthUser).not.toHaveBeenCalled();
+  });
+  it("suppresses thrown cleanup exceptions without a replacement", async () => {
+    (deleteUnacceptedAuthUser as Mock).mockRejectedValue(new Error("smtp boom token"));
+    const { viewer } = fakeViewer({ admin_begin_customer_invitation_reissue: claim });
+    expect(await reissueCustomerInvitation(viewer, "req-r", BIZ, INV)).toBe("reissue_failed");
+    expect(inviteAuthUser).not.toHaveBeenCalled(); expectNoLeakage();
+  });
+});
 
 describe("delivery-failure compensation", () => {
   it("marks the invitation failed and deletes a positively matched cleanup candidate", async () => {

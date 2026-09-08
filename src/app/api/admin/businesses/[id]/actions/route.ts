@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { mapAdminRpcError, parseAdminAction, type AdminOk, type AdminResultError } from "@/lib/admin-actions";
 import { opaque, readAdminRequest, redirectTo } from "@/lib/server/admin-request";
 import { logEvent, newRequestId } from "@/lib/server/http";
-import { inviteCustomerMember, revokeCustomerInvitation } from "@/lib/server/invitations";
+import { inviteCustomerMember, reissueCustomerInvitation, revokeCustomerInvitation } from "@/lib/server/invitations";
 
 // Per-business administrator operations: business lifecycle, integration
 // sources, customer invitations and membership management. The business id
@@ -34,6 +34,10 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
   const { supabase } = r.viewer;
 
   // Invitation actions coordinate the database AND Supabase Auth (fail closed).
+  if (a.kind === "reissue_invitation") {
+    const outcome = await reissueCustomerInvitation(r.viewer, requestId, id, a.invitationId);
+    return redirectTo(request, page, outcome === "invitation_reissued" ? { ok: "invitation_reissued" } : { err: "reissue_failed" });
+  }
   if (a.kind === "invite_member") {
     const outcome = await inviteCustomerMember(r.viewer, requestId, id, a.email, a.displayName, a.role);
     return redirectTo(request, page, outcome === "invited" ? { ok: "invited" } : { err: outcome });

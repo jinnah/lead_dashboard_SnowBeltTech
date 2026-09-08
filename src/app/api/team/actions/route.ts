@@ -5,7 +5,7 @@ import { findAuthorizedBusiness } from "@/lib/lead-query";
 import { parseTeamAction } from "@/lib/team-actions";
 import { ACTION_FORM_MAX_BYTES, readBoundedForm } from "@/lib/server/forms";
 import { logEvent, newRequestId } from "@/lib/server/http";
-import { inviteCustomerMember, revokeCustomerInvitation } from "@/lib/server/invitations";
+import { inviteCustomerMember, reissueCustomerInvitation, revokeCustomerInvitation } from "@/lib/server/invitations";
 import { isSameSiteRequest } from "@/lib/server/same-site";
 import { getViewer } from "@/lib/server/viewer";
 
@@ -66,6 +66,10 @@ export async function POST(request: Request): Promise<NextResponse> {
   const dest = (q: string) => `/dashboard/team?business=${encodeURIComponent(business.slug)}&${q}`;
   const a = parsed.action;
   switch (a.kind) {
+    case "reissue_invitation": {
+      const outcome = await reissueCustomerInvitation(viewer, requestId, business.id, a.invitationId);
+      return back(request, dest(outcome === "invitation_reissued" ? "ok=invitation_reissued" : "err=reissue_failed"));
+    }
     case "invite_member": {
       const outcome = await inviteCustomerMember(viewer, requestId, business.id, a.email, a.displayName, a.role);
       logEvent({ requestId, event: "team_action", status: 303, category: outcome === "invited" ? "ok" : outcome, action: a.kind });

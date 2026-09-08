@@ -20,6 +20,7 @@
 // not a deterministic barrier, so simultaneity is probabilistic.
 
 import { spawn, spawnSync } from "node:child_process";
+import { checkInvitationConcurrency } from "./invitation-concurrency-check.mjs";
 
 const CONTAINER = "supabase_db_Dashboard_SnowBeltTech";
 const N = 8;
@@ -133,6 +134,7 @@ async function main() {
   let exit = 0;
   try {
     await main();
+    await checkInvitationConcurrency();
   } catch (e) {
     console.error(`\n[concurrency] FAIL: ${e.message}`);
     exit = 1;
